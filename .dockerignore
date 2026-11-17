@@ -1,0 +1,11 @@
+# Docker derleme bağlamına girmesin: Windows'ta üretilmiş derleme çıktıları ve gereksiz dosyalar.
+**/bin/
+**/obj/
+.git/
+.vs/
+.vscode/
+.idea/
+.env
+tests/
+docs/
+*.md

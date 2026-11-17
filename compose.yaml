@@ -1,0 +1,93 @@
+# Aspire olmadan tüm sistem (karar 9). Kullanım:
+#   copy .env.example .env   (şifreleri değiştir)
+#   docker compose up --build
+# API http://localhost:8080, bildirim servisi http://localhost:8081, izler http://localhost:18888,
+# RabbitMQ yönetim arayüzü http://localhost:15672. PostgreSQL dışarı açık değil.
+name: digital-wallet
+
+services:
+  postgres:
+    image: postgres:18.3
+    environment:
+      POSTGRES_USER: wallet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD .env dosyasinda tanimli olmali}
+    volumes:
+      # PostgreSQL 18 imajı veriyi /var/lib/postgresql/18/docker altında tutar; üst klasör bağlanır.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wallet"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rabbitmq:
+    image: rabbitmq:4.3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: wallet
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD .env dosyasinda tanimli olmali}
+    ports:
+      - "15672:15672"
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Migration'ları bir kez uygular ve çıkar; servisler başarıyla bitmesini bekler.
+  migrator:
+    build:
+      context: .
+      dockerfile: docker/migrator.Dockerfile
+    environment:
+      WALLETDB_CONNECTION: Host=postgres;Database=walletdb;Username=wallet;Password=${POSTGRES_PASSWORD}
+      NOTIFICATIONSDB_CONNECTION: Host=postgres;Database=notificationsdb;Username=wallet;Password=${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: src/DigitalWallet.Api/Dockerfile
+    environment:
+      ConnectionStrings__walletdb: Host=postgres;Database=walletdb;Username=wallet;Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__messaging: amqp://wallet:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
+      OTEL_SERVICE_NAME: api
+    ports:
+      - "8080:8080"
+    # RabbitMQ'yu bilerek beklemiyor: outbox sayesinde RabbitMQ kapalıyken de çalışır (karar 6).
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+
+  notifications:
+    build:
+      context: .
+      dockerfile: src/DigitalWallet.Notifications/Dockerfile
+    environment:
+      ConnectionStrings__notificationsdb: Host=postgres;Database=notificationsdb;Username=wallet;Password=${POSTGRES_PASSWORD}
+      ConnectionStrings__messaging: amqp://wallet:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://aspire-dashboard:18889
+      OTEL_SERVICE_NAME: notifications
+    ports:
+      - "8081:8080"
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  # İzleri gösteren tek başına Aspire dashboard (OTLP alıcı). Yalnız yerel geliştirme: kimlik doğrulama kapalı.
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:13.6.5
+    environment:
+      ASPIRE_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS: "true"
+    ports:
+      - "18888:18888"
+
+volumes:
+  pgdata:
+  rabbitdata:
