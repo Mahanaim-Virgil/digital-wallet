@@ -249,6 +249,16 @@ namespace DigitalWallet.Api.Infrastructure.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("routing_key");
 
+                    b.Property<string>("TraceParent")
+                        .HasMaxLength(55)
+                        .HasColumnType("character varying(55)")
+                        .HasColumnName("trace_parent");
+
+                    b.Property<string>("TraceState")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("trace_state");
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(100)
