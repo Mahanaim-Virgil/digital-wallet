@@ -29,19 +29,23 @@ public static class Deposit
                 [nameof(Request.Amount)] = [$"Tutar 0'dan büyük, en fazla {Money.MaxAmount} ve en fazla {Money.Decimals} ondalıklı olmalı."],
             });
 
-        var wallet = await db.Wallets.FirstOrDefaultAsync(w => w.Id == id, ct);
-        if (wallet is null)
+        // Varlık kontrolü kilitten önce (cüzdanlar silinmez). Para birimi değişmez; sistem cüzdanını belirler.
+        var currency = await db.Wallets.Where(w => w.Id == id).Select(w => w.Currency).FirstOrDefaultAsync(ct);
+        if (currency is null)
             return TypedResults.NotFound();
 
-        var systemWallet = await db.Wallets.SingleAsync(
-            w => w.Type == WalletType.System && w.Currency == wallet.Currency, ct);
+        var systemWalletId = SystemWallets.ForCurrency(currency);
 
-        // Aşama 3 notu: iki cüzdan da "oku → bellekte değiştir → yaz" ile güncelleniyor; kilit yok.
-        var transaction = LedgerTransaction.Deposit(systemWallet, wallet, amount, timeProvider.GetUtcNow());
+        var transaction = await db.InTransactionAsync(async token =>
+        {
+            // Müşteri ve sistem cüzdanı FOR UPDATE ile kilitlenir; bakiyeler güncel ve başkası değiştiremez.
+            var wallets = await db.LockWalletsAsync([id, systemWalletId], token);
 
-        db.LedgerTransactions.Add(transaction);
-        // Tek SaveChanges: işlem, iki kayıt ve iki bakiye güncellemesi tek DB transaction'ında yazılır.
-        await db.SaveChangesAsync(ct);
+            var deposit = LedgerTransaction.Deposit(wallets[systemWalletId], wallets[id], amount, timeProvider.GetUtcNow());
+            db.LedgerTransactions.Add(deposit);
+            await db.SaveChangesAsync(token);
+            return deposit;
+        }, ct);
 
         return TypedResults.Created($"/transactions/{transaction.Id}", TransactionResponse.From(transaction));
     }

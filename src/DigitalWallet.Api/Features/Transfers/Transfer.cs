@@ -30,22 +30,28 @@ public static class Transfer
         var fromId = request.FromWalletId!.Value;
         var toId = request.ToWalletId!.Value;
 
-        // İki cüzdan tek sorguda: WHERE id IN (@from, @to).
-        var wallets = await db.Wallets
+        // Varlık kontrolü kilitten önce (cüzdanlar silinmez): WHERE id IN (@from, @to).
+        var existing = await db.Wallets
             .Where(w => w.Id == fromId || w.Id == toId)
-            .ToDictionaryAsync(w => w.Id, ct);
+            .Select(w => w.Id)
+            .ToListAsync(ct);
 
-        if (!wallets.TryGetValue(fromId, out var from))
+        if (!existing.Contains(fromId))
             return TypedResults.Problem($"Gönderen cüzdan bulunamadı: {fromId}", statusCode: StatusCodes.Status404NotFound);
-        if (!wallets.TryGetValue(toId, out var to))
+        if (!existing.Contains(toId))
             return TypedResults.Problem($"Alıcı cüzdan bulunamadı: {toId}", statusCode: StatusCodes.Status404NotFound);
 
-        // Aşama 3 notu: bakiye kontrolü (Debit) bellekteki değere bakar; paralel transferlerde
-        // iki istek aynı eski bakiyeyi görebilir. Kilit/versiyon Aşama 3'te.
-        var transaction = LedgerTransaction.Transfer(from, to, request.Amount!.Value, timeProvider.GetUtcNow());
+        var transaction = await db.InTransactionAsync(async token =>
+        {
+            // İki cüzdan id sırasıyla kilitlenir (deadlock önlemi). Bakiye kontrolü (Debit) artık
+            // kilitli, güncel satır üzerinde çalışır.
+            var wallets = await db.LockWalletsAsync([fromId, toId], token);
 
-        db.LedgerTransactions.Add(transaction);
-        await db.SaveChangesAsync(ct);
+            var transfer = LedgerTransaction.Transfer(wallets[fromId], wallets[toId], request.Amount!.Value, timeProvider.GetUtcNow());
+            db.LedgerTransactions.Add(transfer);
+            await db.SaveChangesAsync(token);
+            return transfer;
+        }, ct);
 
         return TypedResults.Created($"/transactions/{transaction.Id}", TransactionResponse.From(transaction));
     }

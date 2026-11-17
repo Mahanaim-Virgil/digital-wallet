@@ -51,8 +51,8 @@ public sealed class Wallet
     {
         Money.EnsureValidAmount(amount);
 
-        // Uyarı (Aşama 3): Bu kontrol bellekteki bakiyeye bakar. Aynı cüzdana paralel iki istek aynı eski
-        // bakiyeyi okursa ikisi de geçebilir ("lost update"). DB'deki CHECK (balance >= 0) son savunmadır.
+        // Bu kontrol bellekteki bakiyeye bakar; doğru olması için cüzdan satırı kilitli yüklenmiş olmalı
+        // (WalletLocking.LockWalletsAsync). DB'deki CHECK (balance >= 0) son savunmadır.
         if (!IsSystem && Balance < amount)
             throw new DomainException(DomainErrors.InsufficientFunds,
                 $"Yetersiz bakiye. Bakiye: {Money.Normalize(Balance)} {Currency}, istenen: {Money.Normalize(amount)} {Currency}.");
