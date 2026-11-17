@@ -1,7 +1,8 @@
 namespace DigitalWallet.Api.Domain;
 
 /// <summary>
-/// Tek para birimli cüzdan. Bakiye yalnızca domain metotlarıyla değişir (Aşama 2'de ledger üzerinden).
+/// Tek para birimli cüzdan. Bakiye yalnızca <see cref="LedgerTransaction"/> üzerinden değişir
+/// (Debit/Credit internal; endpoint'ler bunları doğrudan çağırmaz).
 /// </summary>
 public sealed class Wallet
 {
@@ -10,8 +11,11 @@ public sealed class Wallet
     public Guid Id { get; private set; }
     public string OwnerName { get; private set; } = null!;
     public string Currency { get; private set; } = null!;
+    public WalletType Type { get; private set; }
     public decimal Balance { get; private set; }
     public DateTimeOffset CreatedAtUtc { get; private set; }
+
+    public bool IsSystem => Type == WalletType.System;
 
     // EF Core materyalizasyonu için.
     private Wallet() { }
@@ -24,13 +28,35 @@ public sealed class Wallet
         if (!Currencies.IsSupported(currency))
             throw new ArgumentException($"Desteklenmeyen para birimi: {currency}", nameof(currency));
 
+        var createdAt = Timestamps.ToDatabasePrecision(nowUtc);
+
         return new Wallet
         {
-            Id = Guid.CreateVersion7(nowUtc),
+            Id = Guid.CreateVersion7(createdAt),
             OwnerName = ownerName.Trim(),
             Currency = currency.ToUpperInvariant(),
+            Type = WalletType.Customer,
             Balance = 0m,
-            CreatedAtUtc = nowUtc.ToUniversalTime(),
+            CreatedAtUtc = createdAt,
         };
+    }
+
+    internal void Credit(decimal amount)
+    {
+        Money.EnsureValidAmount(amount);
+        Balance += amount;
+    }
+
+    internal void Debit(decimal amount)
+    {
+        Money.EnsureValidAmount(amount);
+
+        // Uyarı (Aşama 3): Bu kontrol bellekteki bakiyeye bakar. Aynı cüzdana paralel iki istek aynı eski
+        // bakiyeyi okursa ikisi de geçebilir ("lost update"). DB'deki CHECK (balance >= 0) son savunmadır.
+        if (!IsSystem && Balance < amount)
+            throw new DomainException(DomainErrors.InsufficientFunds,
+                $"Yetersiz bakiye. Bakiye: {Money.Normalize(Balance)} {Currency}, istenen: {Money.Normalize(amount)} {Currency}.");
+
+        Balance -= amount;
     }
 }
