@@ -2,10 +2,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DigitalWallet.ServiceDefaults\DigitalWallet.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\DigitalWallet.Contracts\DigitalWallet.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Aspire.Npgsql.EntityFrameworkCore.PostgreSQL" Version="13.6.5" />
+    <PackageReference Include="Aspire.RabbitMQ.Client" Version="13.6.5" />
     <PackageReference Include="EFCore.NamingConventions" Version="10.0.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

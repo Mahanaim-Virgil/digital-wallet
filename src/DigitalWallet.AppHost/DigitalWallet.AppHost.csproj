@@ -2,10 +2,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DigitalWallet.Api\DigitalWallet.Api.csproj" />
+    <ProjectReference Include="..\DigitalWallet.Notifications\DigitalWallet.Notifications.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.PostgreSQL" Version="13.6.5" />
+    <PackageReference Include="Aspire.Hosting.RabbitMQ" Version="13.6.5" />
   </ItemGroup>
 
   <PropertyGroup>
