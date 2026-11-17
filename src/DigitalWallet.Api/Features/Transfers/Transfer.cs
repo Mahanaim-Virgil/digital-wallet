@@ -1,7 +1,9 @@
 using DigitalWallet.Api.Domain;
 using DigitalWallet.Api.Features.Transactions;
 using DigitalWallet.Api.Infrastructure;
+using DigitalWallet.Api.Infrastructure.Idempotency;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace DigitalWallet.Api.Features.Transfers;
@@ -9,9 +11,12 @@ namespace DigitalWallet.Api.Features.Transfers;
 /// <summary>
 /// POST /transfers: müşteriden müşteriye, aynı para biriminde transfer.
 /// Kayıtlar: gönderen (−tutar), alıcı (+tutar). Yetersiz bakiye / para birimi farkı → 422 (domain).
+/// `Idempotency-Key` zorunlu; aynı anahtarla tekrar gelen istek parayı yeniden hareket ettirmez.
 /// </summary>
 public static class Transfer
 {
+    public const string IdempotencyScope = "transfer";
+
     public sealed record Request(Guid? FromWalletId, Guid? ToWalletId, decimal? Amount);
 
     public static IEndpointRouteBuilder MapTransfer(this IEndpointRouteBuilder app)
@@ -21,14 +26,20 @@ public static class Transfer
     }
 
     private static async Task<Results<Created<TransactionResponse>, ValidationProblem, ProblemHttpResult>> HandleAsync(
-        Request request, WalletDbContext db, TimeProvider timeProvider, CancellationToken ct)
+        Request request,
+        [FromHeader(Name = IdempotentExecution.HeaderName)] string? idempotencyKey,
+        HttpContext httpContext,
+        WalletDbContext db,
+        TimeProvider timeProvider,
+        CancellationToken ct)
     {
-        var errors = Validate(request);
+        var errors = Validate(request, idempotencyKey);
         if (errors.Count > 0)
             return TypedResults.ValidationProblem(errors);
 
         var fromId = request.FromWalletId!.Value;
         var toId = request.ToWalletId!.Value;
+        var amount = request.Amount!.Value;
 
         // Varlık kontrolü kilitten önce (cüzdanlar silinmez): WHERE id IN (@from, @to).
         var existing = await db.Wallets
@@ -41,25 +52,31 @@ public static class Transfer
         if (!existing.Contains(toId))
             return TypedResults.Problem($"Alıcı cüzdan bulunamadı: {toId}", statusCode: StatusCodes.Status404NotFound);
 
-        var transaction = await db.InTransactionAsync(async token =>
+        var idempotencyRequest = IdempotencyRequest.Create(IdempotencyScope, idempotencyKey!,
+            new { FromWalletId = fromId, ToWalletId = toId, Amount = Money.Normalize(amount) });
+
+        var outcome = await db.ExecuteIdempotentAsync(idempotencyRequest, async token =>
         {
-            // İki cüzdan id sırasıyla kilitlenir (deadlock önlemi). Bakiye kontrolü (Debit) artık
-            // kilitli, güncel satır üzerinde çalışır.
+            // İki cüzdan id sırasıyla kilitlenir (deadlock önlemi). Bakiye kontrolü (Debit) kilitli,
+            // güncel satır üzerinde çalışır.
             var wallets = await db.LockWalletsAsync([fromId, toId], token);
 
-            var transfer = LedgerTransaction.Transfer(wallets[fromId], wallets[toId], request.Amount!.Value, timeProvider.GetUtcNow());
+            var transfer = LedgerTransaction.Transfer(wallets[fromId], wallets[toId], amount, timeProvider.GetUtcNow());
             db.LedgerTransactions.Add(transfer);
-            await db.SaveChangesAsync(token);
             return transfer;
-        }, ct);
+        }, timeProvider, ct);
 
-        return TypedResults.Created($"/transactions/{transaction.Id}", TransactionResponse.From(transaction));
+        return outcome.Kind == IdempotencyOutcomeKind.KeyReusedWithDifferentRequest
+            ? IdempotentResponses.KeyReused()
+            : IdempotentResponses.Created(outcome, httpContext);
     }
 
-    private static Dictionary<string, string[]> Validate(Request request)
+    private static Dictionary<string, string[]> Validate(Request request, string? idempotencyKey)
     {
         var errors = new Dictionary<string, string[]>();
 
+        if (IdempotentExecution.ValidateKey(idempotencyKey) is { } keyError)
+            errors[IdempotentExecution.HeaderName] = [keyError];
         if (request.FromWalletId is null)
             errors[nameof(Request.FromWalletId)] = ["Gönderen cüzdan zorunludur."];
         if (request.ToWalletId is null)
