@@ -80,3 +80,52 @@ adım olacak (seçenek 3'e yakın).
   açılmamalı.
 - Elle uygulama yolu da açık kalıyor: `ConnectionStrings__walletdb` ortam değişkeniyle
   `dotnet ef database update` (bkz. `DesignTimeDbContextFactory`).
+
+## 3. Ledger tasarımı: çift taraflı kayıt, bakiye kolonu, sistem cüzdanları
+
+**Tarih:** 2026-11-17 (Aşama 2)
+
+### Bağlam
+Para yatırma ve transfer eklenince "bu bakiye neden bu?" sorusunun cevaplanabilmesi, para yoktan var
+olmaması ve yarım kalan işlem olmaması gerekiyor. Her hareket kayda geçmeli, kayıtlar değişmemeli.
+
+### Seçenekler ve kararlar
+**a) Bakiye nerede?**
+1. Yalnızca ledger: bakiye = `SUM(amount)`. Tutarsızlık imkansız; ama kayıt arttıkça okuma yavaşlar ve
+   "eksiye düşmesin" kontrolü için yine kilitlenecek bir satır gerekir.
+2. **Seçilen:** `wallets.balance` kolonu + ledger, aynı DB transaction'ında. Okuma O(1); Aşama 3'te kilit
+   veya versiyon bu satıra konur. Ledger asıl kaynaktır; kolon onun özetidir ve SQL ile denetlenir.
+
+**b) Tutar tipi?**
+1. `long` en küçük birim (kuruş): yuvarlama yok; ama her sınırda dönüşüm, okuması zor.
+2. **Seçilen:** `decimal` (`numeric(19,4)`), kural: tutar > 0, en fazla 2 ondalık, üst sınır var.
+   API yanıtlarında tutarlar hep 2 ondalıkla döner (`Money.Normalize`).
+
+**c) Para yatırmanın karşı tarafı?**
+1. Ayrı `accounts` tablosu (muhasebe tarzı): genel, ama bu kapsam için fazla tablo.
+2. **Seçilen:** `wallets.type` (`Customer`/`System`). Her para birimi için bir sistem cüzdanı migration ile
+   eklenir ("dış dünya"). Sistem cüzdanı eksiye düşebilir; eksi bakiyesi müşterilere olan toplam borçtur.
+
+**Ortak kurallar**
+- Her işlem (`ledger_transactions`) en az iki kayıt (`ledger_entries`) içerir; kayıtların toplamı 0.
+  Bu kural `LedgerTransaction` içinde kontrol edilir. Kayıtlar güncellenmez/silinmez.
+- Her kayıtta `balance_after` tutulur (ekstre ve satır bazında denetim için).
+- İşlem kayıtları ve bakiye güncellemeleri tek `SaveChanges` ile yazılır; EF Core bunu tek DB transaction'ı
+  içinde yapar.
+- Veritabanı da korur: müşteri cüzdanında `balance >= 0` (CHECK), kayıt tutarı `<> 0`, para birimi başına
+  tek sistem cüzdanı (filtreli unique index).
+- İş kuralı ihlali (yetersiz bakiye, para birimi uyuşmazlığı...) `DomainException` → `422` ProblemDetails
+  (`code` alanıyla). Girdi hatası `400`, olmayan cüzdan `404`.
+
+### Takas
+- Bakiye iki yerde (kolon + ledger) tutuluyor; tutarlılık kodla sağlanıyor, SQL denetim sorgusuyla
+  doğrulanıyor (`SUM(ledger_entries.amount)` cüzdan bakiyesine eşit, tüm kayıtların toplamı 0).
+- **Eşzamanlılık bu aşamada çözülmedi:** bakiye "oku, değiştir, yaz" ile güncelleniyor. Aynı cüzdana
+  paralel istekte "lost update" olabilir. CHECK kısıtı müşteri bakiyesinin eksiye düşmesini engeller ama
+  kaybolan güncellemeyi engellemez. Aşama 3'ün konusu.
+- Her para yatırma aynı sistem cüzdanı satırını günceller; Aşama 3'te kilit eklenince bu satır darboğaz
+  olabilir (hot row). Gerekirse sistem cüzdanının bakiyesi kolonda tutulmayıp ledger'dan hesaplanabilir.
+- Kayıtların değiştirilemezliği şimdilik yalnızca kodla korunuyor; DB tetikleyicisi (UPDATE/DELETE
+  reddi) ileride eklenebilir.
+- İş kuralı hatalarını istisna ile taşımak basit ama "kontrol akışı için istisna" sayılır; hata sayısı
+  az ve beklenmedik olduğu için kabul edildi.
