@@ -1,3 +1,4 @@
+using DigitalWallet.Api.Features.Deposits;
 using DigitalWallet.Api.Features.Wallets;
 using DigitalWallet.Api.Infrastructure;
 using Microsoft.EntityFrameworkCore;
@@ -16,6 +17,8 @@ builder.Services.AddSingleton(TimeProvider.System);
 
 // Hata yanıtları (404, 500, doğrulama) RFC 9457 ProblemDetails biçiminde.
 builder.Services.AddProblemDetails();
+// İş kuralı ihlalleri (DomainException) → 422.
+builder.Services.AddExceptionHandler<DomainExceptionHandler>();
 
 var app = builder.Build();
 
@@ -37,6 +40,7 @@ app.MapDefaultEndpoints();
 app.MapGroup("/wallets")
     .WithTags("Wallets")
     .MapCreateWallet()
-    .MapGetWallet();
+    .MapGetWallet()
+    .MapDeposit();
 
 app.Run();
