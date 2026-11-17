@@ -275,3 +275,64 @@ Seçenek 1. Ek olarak:
   olduğu için artık görünmez; yayıncı sorunları loglardan izlenir.
 - Örnekleyici kuralı tüm projeler için geçerli: ileride arka planda yapılan ve izlenmesi istenen bir
   istemci çağrısı varsa önce bir ebeveyn span açılmalı.
+
+## 8. Test stratejisi: birim + gerçek PostgreSQL/RabbitMQ ile entegrasyon (Testcontainers)
+
+**Tarih:** 2026-11-18 (Aşama 6)
+
+### Bağlam
+Aşama 3-5'teki davranışlar (lost update, deadlock, eşzamanlı idempotency, outbox kesintisi, inbox
+tekrarı) yalnızca elle (`curl --parallel`, dashboard) doğrulandı. Bunlar PostgreSQL'e özgü özelliklere
+dayanıyor: `FOR UPDATE`, `SKIP LOCKED`, CHECK kısıtları, `jsonb`, benzersizlik hatası kodları.
+Windows'ta `dotnet test` engelleniyor; testler Linux container'ında ve CI'da çalışmalı.
+
+### Seçenekler
+1. **SQLite / EF InMemory:** hızlı; ama yukarıdaki özellikleri desteklemez veya farklı davranır →
+   test geçer, üretim bozulur.
+2. **WebApplicationFactory + Testcontainers:** API bellekte, PostgreSQL ve RabbitMQ gerçek container.
+3. **Aspire.Hosting.Testing:** tüm AppHost test içinde; gerçek uçtan uca ama yavaş, dcp gerektirir
+   (Windows'ta engellenebiliyor), eşzamanlılık testleri için ağır.
+
+### Karar
+Seçenek 2. Araçlar: xUnit v3 (Apache-2.0), Testcontainers (MIT), `Microsoft.AspNetCore.Mvc.Testing`.
+FluentAssertions 8 ticari lisansa geçtiği için kullanılmadı; xUnit `Assert` yeterli.
+- `tests/DigitalWallet.UnitTests`: domain ve saf yardımcılar, DB yok.
+- `tests/DigitalWallet.Api.IntegrationTests`: koleksiyon başına bir PostgreSQL ve bir RabbitMQ container'ı;
+  her test kendi cüzdanlarını açar (testler birbirinin verisine dokunmaz, DB sıfırlanmaz). Eşzamanlılık
+  testleri gerçekten paralel istek atar (`Task.WhenAll`).
+- `tests/DigitalWallet.Notifications.IntegrationTests`: işlemci + gerçek PostgreSQL; tüketici + gerçek
+  RabbitMQ (tekrar ve bozuk mesaj).
+- Uçtan uca: `docker compose` ile duman testi (CI).
+
+### Takas
+- Entegrasyon testleri container başlatma süresi yüzünden yavaş (koleksiyon başına birkaç saniye);
+  CI'da kabul edilebilir.
+- Test için üretim koduna küçük bir ayar eklendi: `Outbox:PublisherEnabled` (varsayılan `true`); outbox'ın
+  "bekliyor" durumu yayıncı kapalıyken belirlenimci (deterministic) test edilebilsin diye.
+- Testler sıfırdan bir veritabanına migration uygular; "unutulmuş migration" testi model ile snapshot'ı
+  karşılaştırır (`HasPendingModelChanges`).
+
+## 9. Dağıtım: Dockerfile'lar, EF migration bundle, Docker Compose, GitHub Actions
+
+**Tarih:** 2026-11-18 (Aşama 6)
+
+### Bağlam
+Karar 2'de migration'ların yalnızca yerelde (Aspire) açılışta uygulandığı, Docker yolunun ayrı bir adım
+olacağı yazılmıştı. Proje Aspire olmadan da tek komutla ayağa kalkabilmeli ve her push CI'da sınanmalı.
+
+### Karar
+- Servis başına çok aşamalı Dockerfile: `sdk:10.0` ile publish, `aspnet:10.0` ile root olmayan
+  kullanıcıyla (`app`) çalıştırma.
+- Migration'lar için **EF migration bundle** (`dotnet ef migrations bundle`): ayrı `migrator` imajı,
+  compose'da bir kez çalışır; servisler `service_completed_successfully` koşuluyla bekler. Uygulamaların
+  açılışta migration bayrağı compose'da kapalı.
+- Compose: `postgres`, `rabbitmq`, `migrator`, `api`, `notifications`, `aspire-dashboard` (OTLP alıcı ve iz
+  arayüzü). Şifreler `.env`'den (repoda yalnız `.env.example`).
+- GitHub Actions: (1) derleme + birim + entegrasyon testleri, (2) compose ile duman testi (CI'da rastgele
+  şifreler üretilir).
+
+### Takas
+- Compose'daki Aspire dashboard kimlik doğrulamasız (yalnız yerel geliştirme için); üretim için değil.
+- Bundle imajı her migration değişikliğinde yeniden derlenir.
+- ServiceDefaults `/health` uç noktalarını yalnız Development'ta açtığı için compose'da servis
+  sağlık kontrolü yerine duman testi kullanılır.
