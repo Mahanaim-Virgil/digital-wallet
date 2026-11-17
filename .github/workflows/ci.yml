@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "stage-*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Aynı dala art arda push edilirse eski çalıştırma iptal edilir.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+jobs:
+  build-and-test:
+    name: Derleme ve testler
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore DigitalWallet.slnx
+
+      - name: Build
+        run: dotnet build DigitalWallet.slnx --no-restore -c Release
+
+      # global.json Microsoft Testing Platform'u açar. Entegrasyon testleri Testcontainers ile
+      # runner'daki Docker'da gerçek PostgreSQL ve RabbitMQ başlatır.
+      - name: Birim testleri
+        run: dotnet test --project tests/DigitalWallet.UnitTests/DigitalWallet.UnitTests.csproj --no-build -c Release
+
+      - name: API entegrasyon testleri
+        run: dotnet test --project tests/DigitalWallet.Api.IntegrationTests/DigitalWallet.Api.IntegrationTests.csproj --no-build -c Release
+
+      - name: Bildirim servisi entegrasyon testleri
+        run: dotnet test --project tests/DigitalWallet.Notifications.IntegrationTests/DigitalWallet.Notifications.IntegrationTests.csproj --no-build -c Release
+
+  compose-smoke:
+    name: Docker Compose duman testi
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # Her çalıştırmada rastgele şifreler (yalnız harf/rakam: amqp:// adresine girer). Loglanmaz.
+      - name: .env oluştur
+        run: |
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> .env
+          echo "RABBITMQ_PASSWORD=$(openssl rand -hex 16)" >> .env
+
+      - name: Ayağa kaldır
+        run: docker compose up -d --build
+
+      - name: Duman testi
+        run: bash scripts/smoke-test.sh http://localhost:8080 http://localhost:8081
+
+      - name: Hata olursa loglar
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Temizle
+        if: always()
+        run: docker compose down -v
