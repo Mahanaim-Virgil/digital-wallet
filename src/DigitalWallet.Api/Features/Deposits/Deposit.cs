@@ -2,6 +2,7 @@ using DigitalWallet.Api.Domain;
 using DigitalWallet.Api.Features.Transactions;
 using DigitalWallet.Api.Infrastructure;
 using DigitalWallet.Api.Infrastructure.Idempotency;
+using DigitalWallet.Api.Infrastructure.Outbox;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -63,6 +64,8 @@ public static class Deposit
 
             var deposit = LedgerTransaction.Deposit(wallets[systemWalletId], wallets[id], amount, timeProvider.GetUtcNow());
             db.LedgerTransactions.Add(deposit);
+            // Olay aynı transaction'da outbox'a: para hareketi ve olay birlikte yazılır ya da hiçbiri.
+            db.OutboxMessages.Add(LedgerEvents.ToOutboxMessage(deposit));
             return deposit;
         }, timeProvider, ct);
 

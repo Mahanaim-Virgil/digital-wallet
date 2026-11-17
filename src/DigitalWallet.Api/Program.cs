@@ -3,6 +3,7 @@ using DigitalWallet.Api.Features.Transactions;
 using DigitalWallet.Api.Features.Transfers;
 using DigitalWallet.Api.Features.Wallets;
 using DigitalWallet.Api.Infrastructure;
+using DigitalWallet.Api.Infrastructure.Outbox;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +15,11 @@ builder.AddServiceDefaults();
 // ayrıca DB health check'i, retry ve Npgsql tracing'i ekler.
 builder.AddNpgsqlDbContext<WalletDbContext>("walletdb",
     configureDbContextOptions: options => options.UseSnakeCaseNamingConvention());
+
+// RabbitMQ bağlantısı (Aspire bileşeni; bağlantı bilgisi `ConnectionStrings:messaging`'den).
+// Health check kapalı: RabbitMQ kapalıyken API sağlıklıdır ve para hareketini kabul eder (outbox, karar 6).
+builder.AddRabbitMQClient("messaging", settings => settings.DisableHealthChecks = true);
+builder.Services.AddHostedService<OutboxPublisher>();
 
 builder.Services.AddSingleton(TimeProvider.System);
 
