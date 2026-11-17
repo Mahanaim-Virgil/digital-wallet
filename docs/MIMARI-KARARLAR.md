@@ -239,3 +239,39 @@ Seçenek 4. İkinci servis: **bildirim servisi** (`DigitalWallet.Notifications`)
   global sıra garanti değil. Bildirimler sıraya bağımlı değil.
 - Yayıncı, RabbitMQ'ya gönderirken DB transaction'ını (ve satır kilitlerini) açık tutar; parti küçük tutuldu.
 - Outbox ve inbox tabloları temizlenmiyor (Aşama 3'teki idempotency tablosu gibi).
+
+## 7. Dağıtık iz: outbox'ta trace bağlamı (ebeveyn), arka plan gürültüsünü örnekleme dışı bırakma
+
+**Tarih:** 2026-11-17 (Aşama 5)
+
+### Bağlam
+ServiceDefaults OpenTelemetry'yi kuruyor; Aspire'ın Npgsql ve RabbitMQ bileşenleri span üretiyor ve
+RabbitMQ.Client 7 `traceparent`'ı mesaj başlığında yayıncıdan tüketiciye kendiliğinden taşıyor. Ama bir
+transfer dashboard'da **iki ayrı iz** olarak görünüyordu: `POST /transfers` (HTTP + DB) commit'te bitiyor;
+outbox yayıncısı arka planda, ortamda iz yokken çalıştığı için `publish transfer.completed` yeni bir iz
+başlatıyordu. Ayrıca yayıncının saniyede bir yoklama sorgusu her seferinde kök iz üretiyordu
+(birkaç dakikada 640+ iz).
+
+### Seçenekler
+1. **Ebeveyn:** olay outbox'a yazılırken o anki `traceparent`/`tracestate` kolona kaydedilir; yayıncı mesaj
+   başına bu bağlamdan çocuk span başlatır. Tek iz: istek → DB → outbox yayını → RabbitMQ → bildirim → DB.
+2. **Bağlantı (link):** yayın kendi izinde kalır, orijinal ize link verir (OpenTelemetry mesajlaşma
+   kurallarının toplu/asenkron işler için tercih ettiği yol); dashboard'da iki iz.
+
+### Karar
+Seçenek 1. Ek olarak:
+- `RootClientSpanFilteringSampler` (ServiceDefaults): ebeveyni olmayan `Client` türü span'ler (arka plandaki
+  sahipsiz DB sorguları) kaydedilmez; diğerleri `ParentBased(AlwaysOn)` ile aynı.
+- Özel span/etiketler (`ActivitySource` adı = uygulama adı, ServiceDefaults zaten kayıtlı):
+  `wallet.lock` (satır kilidi bekleme süresi), istek span'inde `idempotency.outcome` ve
+  `ledger.transaction.id`, yayıncıda `outbox.publish <Type>` (bekleme süresi `outbox.delay_ms`),
+  tüketicide `inbox.duplicate`.
+- Etiketlere kişisel veri (sahip adı) konmaz; kimlikler ve tutar yeterli.
+
+### Takas
+- İzin toplam süresi outbox bekleme süresini (≈1 sn yoklama) içerir; "istek süresi" için kök HTTP span'ine
+  bakılmalı.
+- Yayıncının parti sorguları (SELECT ... FOR UPDATE SKIP LOCKED, işaretleme UPDATE'i) kök Client span
+  olduğu için artık görünmez; yayıncı sorunları loglardan izlenir.
+- Örnekleyici kuralı tüm projeler için geçerli: ileride arka planda yapılan ve izlenmesi istenen bir
+  istemci çağrısı varsa önce bir ebeveyn span açılmalı.
