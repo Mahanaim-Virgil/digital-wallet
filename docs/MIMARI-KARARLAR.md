@@ -198,3 +198,44 @@ yerde (ör. hız sınırlama, önbellek) sonra değerlendirilecek.
 - Anahtar kapsamı uç nokta bazında (`scope`); kullanıcı bazında değil (kimlik doğrulama kapsam dışı).
 - Başarısız sonuçları saklamamak, "ilk denemede 422, sonra aynı anahtarla 201" durumuna izin verir; Stripe
   gibi hatayı da saklayan sistemlerden farklı ama bu kapsamda daha anlaşılır.
+
+## 6. Mesajlaşma: elle yazılmış Transactional Outbox + RabbitMQ, bildirim servisi
+
+**Tarih:** 2026-11-17 (Aşama 4)
+
+### Bağlam
+Para hareketinden sonra başka işler (bildirim, izleme) yapılmalı ama API'yi yavaşlatmamalı ve onlar
+çökünce transfer başarısız olmamalı. API olay yayınlar, ikinci servis RabbitMQ'dan alır.
+"Önce DB commit, sonra publish" ikili yazmadır (dual write): ikisi atomik değil; commit sonrası publish
+başarısız olursa olay kaybolur, önce publish edilip commit başarısız olursa olmamış bir olay yayınlanır.
+
+### Seçenekler
+1. **MassTransit 9:** hazır outbox/inbox; ama 9.x ticari lisanslı (NuGet `licenseUrl`: massient.com/license).
+2. **MassTransit 8.5 (Apache-2.0):** hazır EF Core outbox/inbox, ilanlarda sık geçer; ama ana geliştirme 9'a
+   geçti, 8'in bakım süresi sınırlı; mekanizma kütüphanede gizli kalır.
+3. **Wolverine (MIT):** yerleşik outbox; Türkiye ilanlarında nadir.
+4. **Elle outbox + `RabbitMQ.Client` (Aspire bileşeni):** daha çok kod, lisans riski yok, mekanizma açık.
+
+### Karar
+Seçenek 4. İkinci servis: **bildirim servisi** (`DigitalWallet.Notifications`), kendi veritabanı
+`notificationsdb` (aynı PostgreSQL sunucusu, ayrı veritabanı; servisler veri paylaşmaz).
+- **Sözleşmeler** `DigitalWallet.Contracts`: `DepositCompleted`, `TransferCompleted`. RabbitMQ'da topic
+  exchange `wallet.events`, routing key'ler `deposit.completed`, `transfer.completed`.
+- **Outbox (API):** olay, para hareketiyle aynı DB transaction'ında `outbox_messages`'a yazılır.
+- **Yayıncı (API, BackgroundService):** `published_at IS NULL` mesajları `ORDER BY id LIMIT n FOR UPDATE
+  SKIP LOCKED` ile alır (birden çok kopya aynı mesajı almaz), kalıcı (persistent) ve `mandatory` olarak
+  gönderir, **publisher confirm** bekler, sonra `published_at` işaretler. RabbitMQ yoksa veya mesaj hiçbir
+  kuyruğa yönlenemiyorsa mesaj outbox'ta kalır, `attempts`/`last_error` güncellenir, sonra yeniden denenir.
+- **Teslim garantisi:** en az bir kez (at-least-once). Yayıncı publish ile işaretleme arasında çökerse mesaj
+  tekrar gider.
+- **Tüketici (bildirim servisi):** manuel ack; mesaj kimliği (`message_id` = outbox id) `processed_messages`
+  tablosuna bildirimle aynı transaction'da yazılır (inbox). Aynı mesaj tekrar gelirse atlanır ve ack'lenir.
+  Çözümlenemeyen veya ikinci denemede de hata veren mesaj dead-letter kuyruğuna gider.
+
+### Takas
+- Kod ve parça sayısı arttı (outbox tablosu, yayıncı, inbox, DLQ).
+- Olay gecikmesi yayıncının yoklama aralığı kadar (≈1 sn). PostgreSQL `LISTEN/NOTIFY` ile azaltılabilir.
+- Sıra: tek yayıncıda id (Guid v7, zaman sıralı) sırasıyla gider; birden çok yayıncıda ve yeniden denemede
+  global sıra garanti değil. Bildirimler sıraya bağımlı değil.
+- Yayıncı, RabbitMQ'ya gönderirken DB transaction'ını (ve satır kilitlerini) açık tutar; parti küçük tutuldu.
+- Outbox ve inbox tabloları temizlenmiyor (Aşama 3'teki idempotency tablosu gibi).
