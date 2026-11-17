@@ -1,4 +1,5 @@
 using DigitalWallet.Api.Features.Deposits;
+using DigitalWallet.Api.Features.Transactions;
 using DigitalWallet.Api.Features.Transfers;
 using DigitalWallet.Api.Features.Wallets;
 using DigitalWallet.Api.Infrastructure;
@@ -42,8 +43,10 @@ app.MapGroup("/wallets")
     .WithTags("Wallets")
     .MapCreateWallet()
     .MapGetWallet()
+    .MapGetWalletEntries()
     .MapDeposit();
 
 app.MapTransfer();
+app.MapGetTransaction();
 
 app.Run();
