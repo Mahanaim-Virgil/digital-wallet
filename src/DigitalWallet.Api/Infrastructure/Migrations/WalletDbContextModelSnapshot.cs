@@ -179,6 +179,42 @@ namespace DigitalWallet.Api.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("DigitalWallet.Api.Infrastructure.Idempotency.IdempotencyRecord", b =>
+                {
+                    b.Property<string>("Scope")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("scope");
+
+                    b.Property<string>("Key")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("key");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character(64)")
+                        .HasColumnName("request_hash")
+                        .IsFixedLength();
+
+                    b.Property<Guid?>("TransactionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("transaction_id");
+
+                    b.HasKey("Scope", "Key")
+                        .HasName("pk_idempotency_keys");
+
+                    b.HasIndex("TransactionId")
+                        .HasDatabaseName("ix_idempotency_keys_transaction_id");
+
+                    b.ToTable("idempotency_keys", (string)null);
+                });
+
             modelBuilder.Entity("DigitalWallet.Api.Domain.LedgerEntry", b =>
                 {
                     b.HasOne("DigitalWallet.Api.Domain.LedgerTransaction", null)
@@ -194,6 +230,15 @@ namespace DigitalWallet.Api.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_ledger_entries_wallets_wallet_id");
+                });
+
+            modelBuilder.Entity("DigitalWallet.Api.Infrastructure.Idempotency.IdempotencyRecord", b =>
+                {
+                    b.HasOne("DigitalWallet.Api.Domain.LedgerTransaction", null)
+                        .WithMany()
+                        .HasForeignKey("TransactionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_idempotency_keys_ledger_transactions_transaction_id");
                 });
 
             modelBuilder.Entity("DigitalWallet.Api.Domain.LedgerTransaction", b =>
