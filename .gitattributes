@@ -1,0 +1,8 @@
+# Metin dosyalarında satır sonunu git yönetsin.
+* text=auto
+
+# Linux'ta (container, CI) çalışan betikler ve Docker dosyaları her zaman LF: CRLF ile bash/sh bozulur.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
+compose.yaml text eol=lf
