@@ -39,3 +39,6 @@ app.MapGet("/wallets/{walletId:guid}/notifications", async (Guid walletId, Notif
         .ToListAsync(ct));
 
 app.Run();
+
+/// <summary>Entegrasyon testlerinde WebApplicationFactory&lt;Program&gt; için.</summary>
+public partial class Program;

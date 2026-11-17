@@ -19,7 +19,9 @@ builder.AddNpgsqlDbContext<WalletDbContext>("walletdb",
 // RabbitMQ bağlantısı (Aspire bileşeni; bağlantı bilgisi `ConnectionStrings:messaging`'den).
 // Health check kapalı: RabbitMQ kapalıyken API sağlıklıdır ve para hareketini kabul eder (outbox, karar 6).
 builder.AddRabbitMQClient("messaging", settings => settings.DisableHealthChecks = true);
-builder.Services.AddHostedService<OutboxPublisher>();
+// Varsayılan açık. Testler kapatıp outbox'ın "bekliyor" durumunu belirlenimci olarak sınar (karar 8).
+if (builder.Configuration.GetValue("Outbox:PublisherEnabled", defaultValue: true))
+    builder.Services.AddHostedService<OutboxPublisher>();
 
 builder.Services.AddSingleton(TimeProvider.System);
 
@@ -56,3 +58,6 @@ app.MapTransfer();
 app.MapGetTransaction();
 
 app.Run();
+
+/// <summary>Entegrasyon testlerinde WebApplicationFactory&lt;Program&gt; için.</summary>
+public partial class Program;
