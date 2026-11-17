@@ -109,3 +109,6 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
 - Git kimliği global ayardan gelir (GitHub noreply adresi). Repoya yerel `user.name` veya
   `user.email` yazma.
 - Gizli anahtar veya şifreyi koda, repoya ya da belgeye yazma.
+- Commit mesajlarına ve PR açıklamalarına `Co-Authored-By: Claude` veya "Generated with Claude Code"
+  satırı ekleme (geliştiricinin kararı, 2026-11-17). Yapay zeka kullanımı Aşama 7'de README'de
+  geliştiricinin kendi cümleleriyle açıklanacak.
