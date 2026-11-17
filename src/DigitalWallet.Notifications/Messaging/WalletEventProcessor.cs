@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using DigitalWallet.Contracts;
@@ -25,6 +26,16 @@ public sealed class WalletEventProcessor(NotificationsDbContext db, TimeProvider
     private static readonly CultureInfo Turkish = CultureInfo.GetCultureInfo("tr-TR");
 
     public async Task<ProcessResult> ProcessAsync(Guid messageId, string? type, ReadOnlyMemory<byte> body, CancellationToken ct)
+    {
+        var result = await ProcessCoreAsync(messageId, type, body, ct);
+
+        // RabbitMQ.Client'ın tüketici span'i (yayıncının izine bağlı): mesaj tekrar mıydı? (karar 7)
+        Activity.Current?.SetTag("inbox.duplicate", result == ProcessResult.Duplicate);
+        Activity.Current?.SetTag("messaging.message.id", messageId.ToString());
+        return result;
+    }
+
+    private async Task<ProcessResult> ProcessCoreAsync(Guid messageId, string? type, ReadOnlyMemory<byte> body, CancellationToken ct)
     {
         // Hızlı yol: daha önce işlendiyse gövdeyi çözmeye bile gerek yok.
         if (await db.ProcessedMessages.AnyAsync(p => p.MessageId == messageId, ct))

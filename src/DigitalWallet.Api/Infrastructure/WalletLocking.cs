@@ -38,6 +38,10 @@ public static class WalletLocking
     {
         var ids = walletIds.Distinct().ToArray();
 
+        // Span süresi = kilit bekleme + sorgu süresi; paralel yükte darboğaz burada görünür (karar 7).
+        using var activity = ApiTelemetry.Source.StartActivity("wallet.lock");
+        activity?.SetTag("wallet.lock.count", ids.Length);
+
         // FromSql parametreleri SQL parametresine çevirir (SQL injection yok).
         var wallets = await db.Wallets
             .FromSql($"SELECT * FROM wallets WHERE id = ANY({ids}) ORDER BY id FOR UPDATE")

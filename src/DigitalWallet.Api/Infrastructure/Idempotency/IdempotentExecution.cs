@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -58,6 +59,32 @@ public static class IdempotentExecution
     /// </summary>
     public static async Task<IdempotencyOutcome> ExecuteIdempotentAsync(
         this WalletDbContext db,
+        IdempotencyRequest request,
+        Func<CancellationToken, Task<LedgerTransaction>> work,
+        TimeProvider timeProvider,
+        CancellationToken ct)
+    {
+        var outcome = await ExecuteCoreAsync(db, request, work, timeProvider, ct);
+
+        // İstek span'inde: para gerçekten hareket etti mi, yoksa tekrar mıydı? (karar 7)
+        var span = Activity.Current;
+        span?.SetTag("idempotency.outcome", outcome.Kind switch
+        {
+            IdempotencyOutcomeKind.Created => "created",
+            IdempotencyOutcomeKind.Replayed => "replayed",
+            _ => "key_reused",
+        });
+        if (outcome.Transaction is { } transaction)
+        {
+            span?.SetTag("ledger.transaction.id", transaction.Id.ToString());
+            span?.SetTag("ledger.transaction.type", transaction.Type.ToString());
+        }
+
+        return outcome;
+    }
+
+    private static async Task<IdempotencyOutcome> ExecuteCoreAsync(
+        WalletDbContext db,
         IdempotencyRequest request,
         Func<CancellationToken, Task<LedgerTransaction>> work,
         TimeProvider timeProvider,
