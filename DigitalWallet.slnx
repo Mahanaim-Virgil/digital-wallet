@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DigitalWallet.Api/DigitalWallet.Api.csproj" />
+    <Project Path="src/DigitalWallet.AppHost/DigitalWallet.AppHost.csproj" />
+    <Project Path="src/DigitalWallet.ServiceDefaults/DigitalWallet.ServiceDefaults.csproj" />
+  </Folder>
+</Solution>
