@@ -61,6 +61,8 @@ public static class Extensions
             })
             .WithTracing(tracing =>
             {
+                // Arka plandaki sahipsiz DB sorguları gibi kök Client span'leri kaydetme (karar 7).
+                tracing.SetSampler(new RootClientSpanFilteringSampler());
                 tracing.AddSource(builder.Environment.ApplicationName)
                     .AddAspNetCoreInstrumentation(tracing =>
                         // Exclude health check requests from tracing
