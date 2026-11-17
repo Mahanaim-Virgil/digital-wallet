@@ -19,7 +19,14 @@ builder.Services.AddProblemDetails();
 
 var app = builder.Build();
 
-app.UseExceptionHandler();
+app.UseExceptionHandler(new ExceptionHandlerOptions
+{
+    // Okunamayan istek (bozuk/eksik JSON) istemci hatasıdır: 500 değil, istisnanın kendi kodu (400).
+    // Development'ta Minimal API bu durumda BadHttpRequestException fırlatır.
+    StatusCodeSelector = exception => exception is BadHttpRequestException badRequest
+        ? badRequest.StatusCode
+        : StatusCodes.Status500InternalServerError,
+});
 app.UseStatusCodePages();
 
 await app.ApplyMigrationsIfEnabledAsync();
