@@ -1,3 +1,4 @@
+using DigitalWallet.Api.Features.Wallets;
 using DigitalWallet.Api.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
@@ -13,11 +14,22 @@ builder.AddNpgsqlDbContext<WalletDbContext>("walletdb",
 
 builder.Services.AddSingleton(TimeProvider.System);
 
+// Hata yanıtları (404, 500, doğrulama) RFC 9457 ProblemDetails biçiminde.
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
+
+app.UseExceptionHandler();
+app.UseStatusCodePages();
 
 await app.ApplyMigrationsIfEnabledAsync();
 
 // /health ve /alive (yalnızca Development ortamında açılır).
 app.MapDefaultEndpoints();
+
+app.MapGroup("/wallets")
+    .WithTags("Wallets")
+    .MapCreateWallet()
+    .MapGetWallet();
 
 app.Run();
