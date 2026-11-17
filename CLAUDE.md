@@ -23,8 +23,7 @@ Redis, RabbitMQ + MassTransit, OpenTelemetry. Mimari: `docs/MIMARI-KARARLAR.md`'
    GitHub Actions yeşil, `docker compose up` ile ayağa kalkıyor.
 7. Mimari kararlar belgesi ve README tamam.
 
-- Durum: Aşama 1-3 tamam (`stage-1`, `stage-2`, `stage-3`), `main`'de. Aşama 4 `stage-4-messaging`
-  dalında yapıldı ve elle doğrulandı.
+- Durum: Aşama 1-4 tamam (`stage-1` ... `stage-4`), `main`'de. Sıradaki: Aşama 5 (OpenTelemetry).
 - Aşama 4'te MassTransit yerine elle outbox + `RabbitMQ.Client` seçildi (MassTransit 9 ticari lisanslı;
   karar 6).
 - Her aşama bitince `stage-N` etiketi, aşamanın doğrulanmış son commit'ine konur.
