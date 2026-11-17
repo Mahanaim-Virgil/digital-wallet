@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using DigitalWallet.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -88,6 +89,17 @@ public sealed class OutboxPublisher(
 
             foreach (var message in messages)
             {
+                // Olayın oluştuğu isteğin izine bağlan (karar 7): bu span ve altındaki RabbitMQ gönderimi,
+                // orijinal HTTP isteğinin izinde görünür. RabbitMQ.Client bağlamı mesaj başlığına yazar.
+                var parent = ActivityContext.TryParse(message.TraceParent, message.TraceState, isRemote: true, out var context)
+                    ? context
+                    : default;
+                using var activity = ApiTelemetry.Source.StartActivity(
+                    $"outbox publish {message.Type}", ActivityKind.Internal, parent);
+                activity?.SetTag("messaging.message.id", message.Id.ToString());
+                activity?.SetTag("outbox.attempt", message.Attempts + 1);
+                activity?.SetTag("outbox.delay_ms", Math.Round((timeProvider.GetUtcNow() - message.OccurredAtUtc).TotalMilliseconds));
+
                 try
                 {
                     var properties = new BasicProperties
@@ -111,6 +123,8 @@ public sealed class OutboxPublisher(
                 catch (Exception ex) when (ex is PublishException or AlreadyClosedException or OperationInterruptedException)
                 {
                     message.RecordFailure(ex.Message);
+                    activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    activity?.AddException(ex);
                     logger.LogWarning(ex, "Outbox mesajı {MessageId} ({Type}) gönderilemedi; deneme {Attempts}.",
                         message.Id, message.Type, message.Attempts);
                     failed = true;
