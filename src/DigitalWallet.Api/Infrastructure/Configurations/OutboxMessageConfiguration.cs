@@ -17,6 +17,9 @@ public sealed class OutboxMessageConfiguration : IEntityTypeConfiguration<Outbox
         message.Property(m => m.Payload).HasColumnType("jsonb").IsRequired();
         message.Property(m => m.OccurredAtUtc).IsRequired();
         message.Property(m => m.LastError).HasMaxLength(1000);
+        // W3C traceparent sabit 55 karakter; tracestate en fazla 512 (W3C sınırı).
+        message.Property(m => m.TraceParent).HasMaxLength(55);
+        message.Property(m => m.TraceState).HasMaxLength(512);
 
         // Yayıncının sorgusu yalnızca bekleyenlere bakar; kısmi index yayınlananlar büyüdükçe küçük kalır.
         message.HasIndex(m => m.Id)

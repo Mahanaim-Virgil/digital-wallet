@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using DigitalWallet.Api.Domain;
 
@@ -22,11 +23,21 @@ public sealed class OutboxMessage
     public int Attempts { get; private set; }
     public string? LastError { get; private set; }
 
+    /// <summary>
+    /// Olayın oluştuğu andaki W3C trace bağlamı (`00-traceid-spanid-flags`). Yayıncı bu bağlamdan çocuk span
+    /// başlatır; böylece arka planda yapılan yayın, orijinal HTTP isteğinin izine bağlanır (karar 7).
+    /// </summary>
+    public string? TraceParent { get; private set; }
+
+    public string? TraceState { get; private set; }
+
     private OutboxMessage() { }
 
     public static OutboxMessage Create<TEvent>(TEvent @event, string type, string routingKey, DateTimeOffset occurredAtUtc)
     {
         var occurredAt = Timestamps.ToDatabasePrecision(occurredAtUtc);
+        // Para hareketi HTTP isteğinin içinde olduğu için Activity.Current isteğin (veya altındaki) span'idir.
+        var current = Activity.Current;
         return new OutboxMessage
         {
             Id = Guid.CreateVersion7(occurredAt),
@@ -34,6 +45,8 @@ public sealed class OutboxMessage
             RoutingKey = routingKey,
             Payload = JsonSerializer.Serialize(@event, JsonSerializerOptions.Web),
             OccurredAtUtc = occurredAt,
+            TraceParent = current?.IdFormat == ActivityIdFormat.W3C ? current.Id : null,
+            TraceState = current?.TraceStateString,
         };
     }
 
