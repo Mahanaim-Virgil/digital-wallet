@@ -23,7 +23,8 @@ Redis, RabbitMQ + MassTransit, OpenTelemetry. Mimari: `docs/MIMARI-KARARLAR.md`'
    GitHub Actions yeşil, `docker compose up` ile ayağa kalkıyor.
 7. Mimari kararlar belgesi ve README tamam.
 
-- Durum: Aşama 1 (`stage-1`) ve Aşama 2 (`stage-2`) tamam, `main`'de. Sıradaki: Aşama 3.
+- Durum: Aşama 1 (`stage-1`) ve Aşama 2 (`stage-2`) tamam, `main`'de. Aşama 3 `stage-3-concurrency`
+  dalında yapıldı ve elle doğrulandı.
 - Her aşama bitince `stage-N` etiketi, aşamanın doğrulanmış son commit'ine konur.
 - Kapsam dışı: gerçek banka/kart entegrasyonu, frontend, Kubernetes, 3'ten fazla servis,
   kur dönüşümü (cüzdan tek para birimli, transfer aynı para birimi arasında),
@@ -66,8 +67,16 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
   `GET /transactions/{id}`, `GET /wallets/{id}/entries?limit=50` (en fazla 200).
   Hata kodları: girdi 400 (ValidationProblem), bulunamadı 404, iş kuralı 422 (`DomainException` →
   `DomainExceptionHandler`, yanıtta `code`: `insufficient_funds`, `currency_mismatch`, `same_wallet`,
-  `system_wallet_not_allowed`, `invalid_amount`).
+  `system_wallet_not_allowed`, `invalid_amount`, `idempotency_key_reused`).
   Para birimleri `Domain/Currencies.cs`: TRY, USD, EUR.
+- Eşzamanlılık (karar 4): para yatırma ve transfer `WalletLocking.InTransactionAsync` (EF yeniden deneme
+  stratejisi içinde açık transaction) + `LockWalletsAsync` (`ORDER BY id FOR UPDATE`). Varlık kontrolü
+  (404) kilitten önce. Domain kuralları yalnızca kilitli yüklenmiş cüzdanlarla çağrılmalı.
+- Idempotency (karar 5): para yatırma ve transferde `Idempotency-Key` başlığı zorunlu (en fazla 100,
+  boşluksuz ASCII). `IdempotentExecution.ExecuteIdempotentAsync`: anahtar satırı önce INSERT → kilit +
+  domain → commit. Tekrar istek aynı 201 + `Idempotent-Replayed: true`; aynı anahtar farklı gövde → 422.
+  Parmak izinde tutar 2 haneye normalleştirilir. Kapsam (`scope`) uç nokta bazında. Yalnız başarılı
+  sonuç saklanır (422 sonrası aynı anahtarla yeniden denenebilir).
 - Ledger (karar 3): `ledger_transactions` + `ledger_entries` (işaretli tutar, `balance_after`). Her işlemin
   kayıt toplamı 0; kayıtlar ve bakiyeler yalnızca `LedgerTransaction.Deposit/Transfer` ile oluşur/değişir.
   `wallets.balance` ledger'ın özetidir. Sistem cüzdanları (dış kaynak, eksiye düşebilir) sabit id'li:
@@ -106,6 +115,10 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
 - Defter denetimi (üçü de 0 dönmeli): `select sum(amount) from ledger_entries;`,
   işlem bazında `group by transaction_id having sum(amount) <> 0`, cüzdan bakiyesi ile
   `sum(ledger_entries.amount)` farkı olan cüzdan sayısı.
+- Eşzamanlılık denemesi: `xargs -P` Windows'ta süreç başlatma yavaş olduğu için istekleri gerçekten
+  paralel göndermez ve yarışı gizler. Tek süreçle `curl --parallel --parallel-immediate -K istekler.cfg`
+  kullan (config'te gövde `data = "{\"amount\":1}"` biçiminde, tek tırnak çalışmaz;
+  `write-out = "%{http_code} %header{idempotent-replayed}\n"`).
 - DB sorgusu (şifre ekrana basılmaz):
   `docker exec <postgres-container> sh -c "PGPASSWORD=\"$POSTGRES_PASSWORD\" psql -U postgres -d walletdb -c \"select * from wallets;\""`
   (container adı `docker ps`'te `postgres-xxxx`). PostgreSQL şifresini Aspire üretir, AppHost
@@ -115,9 +128,11 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
 
 ## Bilinen eksikler
 - Test projesi yok (Aşama 6).
-- **Eşzamanlılık yok (Aşama 3):** bakiye "oku → bellekte değiştir → yaz". Aynı cüzdana paralel
-  istekte lost update olabilir; CHECK kısıtı yalnızca eksi müşteri bakiyesini engeller. Her para yatırma
-  aynı sistem cüzdanı satırını günceller (kilit gelince darboğaz olabilir).
+- Para birimi başına tek sistem cüzdanı: aynı para birimindeki tüm para yatırmalar aynı satırı kilitler
+  (hot row), sırayla işlenir. Kilit bekleme sınırı (`lock_timeout`) yok.
+- `idempotency_keys` hiç temizlenmiyor (süre sınırı yok).
+- Otomatik test yok: lost update, deadlock ve aynı anahtarla eşzamanlı istek yalnızca elle (curl --parallel)
+  denendi. Aşama 6'da Testcontainers ile eşzamanlılık testi yazılmalı.
 - Ledger kayıtlarının değişmezliği yalnızca kodla korunuyor (DB tetikleyicisi yok).
 - Ekstrede cursor sayfalama yok, yalnızca `limit`.
 - `AddLedger` sonrası `wallets.type` kolonunda DB tarafında `DEFAULT 'Customer'` kaldı; EF modeli
