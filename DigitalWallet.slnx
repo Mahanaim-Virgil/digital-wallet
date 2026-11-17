@@ -6,4 +6,7 @@
     <Project Path="src/DigitalWallet.Notifications/DigitalWallet.Notifications.csproj" />
     <Project Path="src/DigitalWallet.ServiceDefaults/DigitalWallet.ServiceDefaults.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DigitalWallet.UnitTests/DigitalWallet.UnitTests.csproj" />
+  </Folder>
 </Solution>

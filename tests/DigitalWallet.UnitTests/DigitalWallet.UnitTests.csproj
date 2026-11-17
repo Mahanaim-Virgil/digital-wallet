@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- xUnit v3 test projeleri çalıştırılabilir programdır. -->
+    <OutputType>Exe</OutputType>
+    <!-- xUnit v3 app host'u zorunlu tutar. Windows'ta bu exe engellenir ama testler zaten Windows'ta
+         çalıştırılmaz (Linux container'ı ve CI); derlemek zararsızdır. -->
+    <UseAppHost>true</UseAppHost>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Microsoft Testing Platform (global.json'da `dotnet test` için açık); VSTest paketleri gerekmez. -->
+    <PackageReference Include="xunit.v3" Version="4.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DigitalWallet.Api\DigitalWallet.Api.csproj" />
+    <ProjectReference Include="..\..\src\DigitalWallet.ServiceDefaults\DigitalWallet.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

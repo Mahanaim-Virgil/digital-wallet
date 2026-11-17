@@ -41,6 +41,20 @@ public sealed class Wallet
         };
     }
 
+    /// <summary>
+    /// Sistem cüzdanı. Üretimde migration seed'iyle oluşur (WalletConfiguration.HasData); bu fabrika
+    /// yalnızca birim testleri içindir (InternalsVisibleTo).
+    /// </summary>
+    internal static Wallet CreateSystem(Guid id, string currency, DateTimeOffset createdAtUtc) => new()
+    {
+        Id = id,
+        OwnerName = $"Sistem: dış kaynak ({currency})",
+        Currency = currency,
+        Type = WalletType.System,
+        Balance = 0m,
+        CreatedAtUtc = createdAtUtc,
+    };
+
     internal void Credit(decimal amount)
     {
         Money.EnsureValidAmount(amount);

@@ -24,4 +24,9 @@
     <UseAppHost>false</UseAppHost>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Domain'in internal üyeleri (Wallet.CreateSystem, Debit/Credit) yalnız birim testlerine açık. -->
+    <InternalsVisibleTo Include="DigitalWallet.UnitTests" />
+  </ItemGroup>
+
 </Project>
