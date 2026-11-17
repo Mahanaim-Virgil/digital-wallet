@@ -23,7 +23,10 @@ Redis, RabbitMQ + MassTransit, OpenTelemetry. Mimari: `docs/MIMARI-KARARLAR.md`'
    GitHub Actions yeşil, `docker compose up` ile ayağa kalkıyor.
 7. Mimari kararlar belgesi ve README tamam.
 
-- Durum: Aşama 1-3 tamam (`stage-1`, `stage-2`, `stage-3`), `main`'de. Sıradaki: Aşama 4.
+- Durum: Aşama 1-3 tamam (`stage-1`, `stage-2`, `stage-3`), `main`'de. Aşama 4 `stage-4-messaging`
+  dalında yapıldı ve elle doğrulandı.
+- Aşama 4'te MassTransit yerine elle outbox + `RabbitMQ.Client` seçildi (MassTransit 9 ticari lisanslı;
+  karar 6).
 - Her aşama bitince `stage-N` etiketi, aşamanın doğrulanmış son commit'ine konur.
 - Kapsam dışı: gerçek banka/kart entegrasyonu, frontend, Kubernetes, 3'ten fazla servis,
   kur dönüşümü (cüzdan tek para birimli, transfer aynı para birimi arasında),
@@ -57,7 +60,19 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
 
 ## Yapı
 - `src/DigitalWallet.AppHost`: Aspire. PostgreSQL container'ı (`postgres`, volume
-  `digital-wallet-postgres-data`), veritabanı `walletdb`, `api` projesi.
+  `digital-wallet-postgres-data`), veritabanları `walletdb` ve `notificationsdb`; RabbitMQ (`messaging`,
+  yönetim arayüzü dahil, volume `digital-wallet-rabbitmq-data`); `api` ve `notifications` projeleri.
+  API RabbitMQ'yu bilerek beklemez (`WaitFor` yok; outbox).
+- `src/DigitalWallet.Contracts`: servisler arası olaylar (`DepositCompleted`, `TransferCompleted`) ve
+  RabbitMQ adları (`WalletEventTopology`). Yayınlanmış sözleşmeden alan silme/yeniden adlandırma yapma.
+- `src/DigitalWallet.Notifications` (karar 6): RabbitMQ tüketicisi, kendi DB'si (`notifications`,
+  `processed_messages` = inbox). `GET /wallets/{id}/notifications` (port 5110). Manuel ack; tekrar mesaj
+  `message_id` ile atlanır; bozuk/bilinmeyen tür veya ikinci kez hata veren mesaj
+  `notifications.wallet-events.dlq` kuyruğuna gider. Migration'lar `Data/Migrations`.
+- Outbox (API, karar 6): olay para hareketiyle aynı transaction'da `outbox_messages`'a (slice'larda
+  `LedgerEvents.ToOutboxMessage`). `OutboxPublisher` her 1 sn bekleyenleri `FOR UPDATE SKIP LOCKED` ile alır,
+  `mandatory` + publisher confirm ile gönderir, `published_at_utc` işaretler; hata → `attempts`/`last_error`,
+  5 sn bekleme. API'de RabbitMQ health check kapalı. Teslim en az bir kez.
 - `src/DigitalWallet.ServiceDefaults`: OpenTelemetry, health check (`/health`, `/alive`), service discovery.
 - `src/DigitalWallet.Api`: `Features/<Özellik>/<İşlem>.cs` (endpoint + iş), `Domain/` (EF/ASP.NET'e
   bağımlı değil), `Infrastructure/` (`WalletDbContext`, migration'lar). Mimari: `docs/MIMARI-KARARLAR.md`.
@@ -89,7 +104,13 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
   çünkü Akıllı Uygulama Denetimi `DigitalWallet.AppHost.exe` ve `DigitalWallet.Api.exe`'yi her
   seferinde engelliyordu. Bunu geri açma.
 - Aspire ile çalıştır: `dotnet run --project src\DigitalWallet.AppHost --launch-profile http`.
-  Dashboard `http://localhost:15115` (giriş linki konsolda), API `http://localhost:5043`.
+  Dashboard `http://localhost:15115` (giriş linki konsolda), API `http://localhost:5043`,
+  bildirim servisi `http://localhost:5110`. RabbitMQ yönetim arayüzü portu `docker port <messaging-xxxx> 15672`.
+  Kaynaklar dashboard'dan durdurulup başlatılabilir (kesinti denemesi). Durdurulmuş bir projenin portuna
+  `curl` Aspire proxy'si yüzünden asılı kalır; `-m 3` gibi zaman aşımı ver.
+- Proje/migration ekledikten sonra Aspire'dan önce TÜM çözümü derle (`dotnet build --no-incremental
+  -p:Deterministic=false`): yalnızca bir projeyi derlemek diğerinin eski dll'ini bırakır (Aşama 4'te
+  API, migration'ı içermeyen dll ile açıldı ve tablo oluşmadı).
   Docker Desktop açık olmalı. İlk açılışta Aspire geliştirme sertifikasına güvenmek için Windows
   uyarısı çıkarabilir (`http` profili için şart değil).
 - Dll engeli (`0x800711C7`) aralıklı: AppHost dll'i engellenirse
@@ -129,7 +150,12 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
 - Test projesi yok (Aşama 6).
 - Para birimi başına tek sistem cüzdanı: aynı para birimindeki tüm para yatırmalar aynı satırı kilitler
   (hot row), sırayla işlenir. Kilit bekleme sınırı (`lock_timeout`) yok.
-- `idempotency_keys` hiç temizlenmiyor (süre sınırı yok).
+- `idempotency_keys`, `outbox_messages` ve `processed_messages` hiç temizlenmiyor (süre sınırı yok).
+- Outbox gecikmesi yoklama aralığı kadar (≈1 sn); `LISTEN/NOTIFY` yok. Birden çok yayıncıda global sıra
+  garanti değil. RabbitMQ'ya hiç bağlanılamadığında `attempts` artmaz, yalnızca loglanır.
+- Dead-letter kuyruğundaki mesajları yeniden işleme aracı yok (elle yönetim arayüzünden).
+- RabbitMQ kimlik bilgilerini Aspire üretir; elle deneme için container ortamından okunur
+  (`docker exec <messaging> printenv RABBITMQ_DEFAULT_PASS`), ekrana/dosyaya yazma.
 - Yerel test DB'sinde bilerek bırakılmış tutarsızlık: Aşama 3'teki kilitsiz paralel denemeden kalan
   "Yaris A", "Yaris Alici", "Yaris C" (2026-11-17 18:30 UTC) ve TRY sistem cüzdanının bakiye kolonu defterle
   uyuşmuyor (lost update kanıtı). Defter denetimi bu 4 cüzdanı gösterir; yeni bir hata değildir.
