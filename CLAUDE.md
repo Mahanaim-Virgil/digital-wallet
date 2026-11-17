@@ -23,6 +23,7 @@ Redis, RabbitMQ + MassTransit, OpenTelemetry. Mimari: `docs/MIMARI-KARARLAR.md`'
    GitHub Actions yeşil, `docker compose up` ile ayağa kalkıyor.
 7. Mimari kararlar belgesi ve README tamam.
 
+- Durum: Aşama 1 tamam (`stage-1`). Aşama 2 `stage-2-ledger` dalında yapıldı ve elle doğrulandı.
 - Her aşama bitince `stage-N` etiketi, aşamanın doğrulanmış son commit'ine konur.
 - Kapsam dışı: gerçek banka/kart entegrasyonu, frontend, Kubernetes, 3'ten fazla servis,
   kur dönüşümü (cüzdan tek para birimli, transfer aynı para birimi arasında),
@@ -60,8 +61,20 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
 - `src/DigitalWallet.ServiceDefaults`: OpenTelemetry, health check (`/health`, `/alive`), service discovery.
 - `src/DigitalWallet.Api`: `Features/<Özellik>/<İşlem>.cs` (endpoint + iş), `Domain/` (EF/ASP.NET'e
   bağımlı değil), `Infrastructure/` (`WalletDbContext`, migration'lar). Mimari: `docs/MIMARI-KARARLAR.md`.
-- Endpoint'ler: `POST /wallets` (`{"ownerName","currency"}` → 201), `GET /wallets/{id}` (200/404).
+- Endpoint'ler: `POST /wallets` (`{"ownerName","currency"}` → 201), `GET /wallets/{id}` (200/404),
+  `POST /wallets/{id}/deposits` (`{"amount"}`), `POST /transfers` (`{"fromWalletId","toWalletId","amount"}`),
+  `GET /transactions/{id}`, `GET /wallets/{id}/entries?limit=50` (en fazla 200).
+  Hata kodları: girdi 400 (ValidationProblem), bulunamadı 404, iş kuralı 422 (`DomainException` →
+  `DomainExceptionHandler`, yanıtta `code`: `insufficient_funds`, `currency_mismatch`, `same_wallet`,
+  `system_wallet_not_allowed`, `invalid_amount`).
   Para birimleri `Domain/Currencies.cs`: TRY, USD, EUR.
+- Ledger (karar 3): `ledger_transactions` + `ledger_entries` (işaretli tutar, `balance_after`). Her işlemin
+  kayıt toplamı 0; kayıtlar ve bakiyeler yalnızca `LedgerTransaction.Deposit/Transfer` ile oluşur/değişir.
+  `wallets.balance` ledger'ın özetidir. Sistem cüzdanları (dış kaynak, eksiye düşebilir) sabit id'li:
+  TRY `...0949`, USD `...0840`, EUR `...0978` (`Domain/SystemWallets.cs`). Tutar: > 0, en fazla 2 ondalık,
+  en fazla 1.000.000; yanıtlarda hep 2 ondalık (`Money.Normalize`).
+- DB kısıtları: müşteri bakiyesi `>= 0` (CHECK), kayıt tutarı `<> 0`, işlem tutarı `> 0`,
+  para birimi başına tek sistem cüzdanı (filtreli unique index).
 
 ## Komutlar
 - Derle: `dotnet build` (kök klasörde). Projelerde `UseAppHost=false`: imzasız `.exe` üretilmez,
@@ -88,6 +101,11 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
   `dotnet ef migrations add ADI --project src\DigitalWallet.Api --output-dir Infrastructure\Migrations --no-build`.
   "Could not load assembly" hatası dll engelidir: yeniden derleyip tekrar dene.
   Migration dosyaları ve `WalletDbContextModelSnapshot.cs` birlikte commit edilir; elle yazılmaz.
+  İstisna: var olan satırlar için varsayılan değer gibi veri düzeltmeleri; değişen satırı yorumla işaretle
+  (ör. `AddLedger`'da `wallets.type` için `defaultValue: "Customer"`).
+- Defter denetimi (üçü de 0 dönmeli): `select sum(amount) from ledger_entries;`,
+  işlem bazında `group by transaction_id having sum(amount) <> 0`, cüzdan bakiyesi ile
+  `sum(ledger_entries.amount)` farkı olan cüzdan sayısı.
 - DB sorgusu (şifre ekrana basılmaz):
   `docker exec <postgres-container> sh -c "PGPASSWORD=\"$POSTGRES_PASSWORD\" psql -U postgres -d walletdb -c \"select * from wallets;\""`
   (container adı `docker ps`'te `postgres-xxxx`). PostgreSQL şifresini Aspire üretir, AppHost
@@ -97,9 +115,13 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
 
 ## Bilinen eksikler
 - Test projesi yok (Aşama 6).
-- `POST` yanıtında `balance` `0`, `GET`'te `0.0000`; `createdAtUtc` POST'ta 7, GET'te 6 ondalık
-  (PostgreSQL mikro saniye tutar). Aynı kaynak iki farklı biçimde dönüyor; Aşama 2'de `Money`
-  ile düzeltilebilir.
+- **Eşzamanlılık yok (Aşama 3):** bakiye "oku → bellekte değiştir → yaz". Aynı cüzdana paralel
+  istekte lost update olabilir; CHECK kısıtı yalnızca eksi müşteri bakiyesini engeller. Her para yatırma
+  aynı sistem cüzdanı satırını günceller (kilit gelince darboğaz olabilir).
+- Ledger kayıtlarının değişmezliği yalnızca kodla korunuyor (DB tetikleyicisi yok).
+- Ekstrede cursor sayfalama yok, yalnızca `limit`.
+- `AddLedger` sonrası `wallets.type` kolonunda DB tarafında `DEFAULT 'Customer'` kaldı; EF modeli
+  bunu bilmiyor (zararsız, uygulama her zaman değer yazıyor).
 - Kimlik doğrulama yok: id'yi bilen herkes cüzdanı görebilir (kapsamda bilinçli olarak basit).
 - HTTPS profili denenmedi; yalnızca `http` profili çalıştırıldı.
 
