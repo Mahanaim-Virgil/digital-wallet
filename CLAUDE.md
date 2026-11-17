@@ -23,7 +23,7 @@ Redis, RabbitMQ + MassTransit, OpenTelemetry. Mimari: `docs/MIMARI-KARARLAR.md`'
    GitHub Actions yeşil, `docker compose up` ile ayağa kalkıyor.
 7. Mimari kararlar belgesi ve README tamam.
 
-- Durum: Aşama 1 tamam (`stage-1`). Aşama 2 `stage-2-ledger` dalında yapıldı ve elle doğrulandı.
+- Durum: Aşama 1 (`stage-1`) ve Aşama 2 (`stage-2`) tamam, `main`'de. Sıradaki: Aşama 3.
 - Her aşama bitince `stage-N` etiketi, aşamanın doğrulanmış son commit'ine konur.
 - Kapsam dışı: gerçek banka/kart entegrasyonu, frontend, Kubernetes, 3'ten fazla servis,
   kur dönüşümü (cüzdan tek para birimli, transfer aynı para birimi arasında),
