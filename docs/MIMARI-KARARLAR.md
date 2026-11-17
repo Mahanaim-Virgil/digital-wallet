@@ -53,3 +53,30 @@ src/DigitalWallet.ServiceDefaults/ // OpenTelemetry, health check, service disco
   ise DB'siz birim testiyle sınanır.
 - Aşama 4'te ikinci bir servis eklenince ortak kod (mesaj sözleşmeleri) için küçük bir paylaşılan
   proje gerekebilir.
+
+## 2. Migration'ların uygulanması: yerelde açılışta, bayrakla
+
+**Tarih:** 2026-11-17 (Aşama 1)
+
+### Bağlam
+PostgreSQL'i yerelde Aspire başlatıyor. Aspire şifreyi kendisi üretir (AppHost user-secrets'ında
+saklar) ve container portunu atar. Bu yüzden elle `dotnet ef database update` için bağlantı dizesini
+her seferinde dashboard'dan almak gerekir.
+
+### Seçenekler
+1. **Elle `dotnet ef database update`.** Açık ve kontrollü; ama Aspire ile her seferinde bağlantı
+   dizesi kopyalamak gerekir.
+2. **API açılırken `Database.MigrateAsync()`.** Pratik. Ama birden fazla API kopyası aynı anda
+   migration'a girişebilir ve uygulamanın DB kullanıcısı şema değiştirme yetkisine ihtiyaç duyar.
+3. **Ayrı migration worker projesi** (Aspire'ın önerdiği desen). Temiz; ama bir proje daha ekler.
+
+### Karar
+Seçenek 2, ama `Database:ApplyMigrationsOnStartup` bayrağıyla. Bayrağın varsayılanı `false`; yalnızca
+AppHost (yerel geliştirme) `true` verir. Docker/üretim yolu Aşama 6'da EF migration bundle ile ayrı bir
+adım olacak (seçenek 3'e yakın).
+
+### Takas
+- Yerelde tek API kopyası çalıştığı için yarış sorunu pratikte yok. Ölçeklenen bir ortamda bayrak
+  açılmamalı.
+- Elle uygulama yolu da açık kalıyor: `ConnectionStrings__walletdb` ortam değişkeniyle
+  `dotnet ef database update` (bkz. `DesignTimeDbContextFactory`).
