@@ -23,7 +23,8 @@ Redis, RabbitMQ + MassTransit, OpenTelemetry. Mimari: `docs/MIMARI-KARARLAR.md`'
    GitHub Actions yeşil, `docker compose up` ile ayağa kalkıyor.
 7. Mimari kararlar belgesi ve README tamam.
 
-- Durum: Aşama 1-4 tamam (`stage-1` ... `stage-4`), `main`'de. Sıradaki: Aşama 5 (OpenTelemetry).
+- Durum: Aşama 1-4 tamam (`stage-1` ... `stage-4`), `main`'de. Aşama 5 `stage-5-tracing` dalında yapıldı
+  ve dashboard'da elle doğrulandı.
 - Aşama 4'te MassTransit yerine elle outbox + `RabbitMQ.Client` seçildi (MassTransit 9 ticari lisanslı;
   karar 6).
 - Her aşama bitince `stage-N` etiketi, aşamanın doğrulanmış son commit'ine konur.
@@ -72,6 +73,15 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
   `LedgerEvents.ToOutboxMessage`). `OutboxPublisher` her 1 sn bekleyenleri `FOR UPDATE SKIP LOCKED` ile alır,
   `mandatory` + publisher confirm ile gönderir, `published_at_utc` işaretler; hata → `attempts`/`last_error`,
   5 sn bekleme. API'de RabbitMQ health check kapalı. Teslim en az bir kez.
+- İzleme (karar 7): outbox satırı olayın `trace_parent`/`trace_state`'ini saklar; yayıncı mesaj başına
+  `outbox publish <Type>` span'ini bu bağlamdan (ebeveyn) başlatır, RabbitMQ.Client bağlamı mesaj başlığıyla
+  tüketiciye taşır → bir transfer dashboard'da tek iz (istek → DB → `wallet.lock` → outbox → RabbitMQ →
+  bildirim → notificationsdb). `RootClientSpanFilteringSampler` (ServiceDefaults) ebeveynsiz Client span'leri
+  (arka plan yoklama sorguları) kaydetmez. Özel span/etiketler: `wallet.lock` (kilit bekleme),
+  `idempotency.outcome`, `ledger.transaction.id/type`, `outbox.delay_ms`, `inbox.duplicate`.
+  `ActivitySource` adı = uygulama adı (`ApiTelemetry.Source`). Etikete kişisel veri (sahip adı) koyma.
+- Dashboard'da bir izi açmak: `http://localhost:15115/traces/detail/<trace_id>`; trace_id
+  `outbox_messages.trace_parent`'ın ikinci parçası.
 - `src/DigitalWallet.ServiceDefaults`: OpenTelemetry, health check (`/health`, `/alive`), service discovery.
 - `src/DigitalWallet.Api`: `Features/<Özellik>/<İşlem>.cs` (endpoint + iş), `Domain/` (EF/ASP.NET'e
   bağımlı değil), `Infrastructure/` (`WalletDbContext`, migration'lar). Mimari: `docs/MIMARI-KARARLAR.md`.
@@ -153,6 +163,12 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
 - Outbox gecikmesi yoklama aralığı kadar (≈1 sn); `LISTEN/NOTIFY` yok. Birden çok yayıncıda global sıra
   garanti değil. RabbitMQ'ya hiç bağlanılamadığında `attempts` artmaz, yalnızca loglanır.
 - Dead-letter kuyruğundaki mesajları yeniden işleme aracı yok (elle yönetim arayüzünden).
+- İzleme: yayıncının parti SELECT/UPDATE sorguları izde görünmez (örnekleme dışı). Telemetri yalnızca
+  Aspire dashboard'una gidiyor (bellekte, kalıcı değil); Jaeger/Tempo gibi kalıcı bir arka uç yok.
+  Ölçülen: 50 paralel TRY yatırmada istek başına 0,8-1 sn (sistem cüzdanı hot row), yetersiz bakiyeyle
+  reddedilen transferde sürenin ~%77'si `wallet.lock` beklemesi.
+- Bash'te başlatma betiği çıktısını `| tail`/`| tee` ile borulama: arka plandaki AppHost boruyu açık tutar,
+  komut bitmez.
 - RabbitMQ kimlik bilgilerini Aspire üretir; elle deneme için container ortamından okunur
   (`docker exec <messaging> printenv RABBITMQ_DEFAULT_PASS`), ekrana/dosyaya yazma.
 - Yerel test DB'sinde bilerek bırakılmış tutarsızlık: Aşama 3'teki kilitsiz paralel denemeden kalan
