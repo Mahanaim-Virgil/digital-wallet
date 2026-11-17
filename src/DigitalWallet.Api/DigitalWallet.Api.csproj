@@ -17,6 +17,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- İmzasız DigitalWallet.Api.exe üretme: Windows Akıllı Uygulama Denetimi onu engelliyor.
+         `dotnet run` (ve Aspire) uygulamayı imzalı dotnet.exe ile `dotnet DigitalWallet.Api.dll` olarak başlatır. -->
+    <UseAppHost>false</UseAppHost>
   </PropertyGroup>
 
 </Project>

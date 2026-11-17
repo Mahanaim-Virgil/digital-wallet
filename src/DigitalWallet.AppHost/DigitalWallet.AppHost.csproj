@@ -14,6 +14,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AspireUseCliBundle>true</AspireUseCliBundle>
+    <!-- İmzasız DigitalWallet.AppHost.exe üretme: Windows Akıllı Uygulama Denetimi onu engelliyor. -->
+    <UseAppHost>false</UseAppHost>
     <UserSecretsId>ccf5f737-5793-4c9d-8a98-0496ed61b3ef</UserSecretsId>
   </PropertyGroup>
 
