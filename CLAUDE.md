@@ -23,7 +23,8 @@ Redis, RabbitMQ + MassTransit, OpenTelemetry. Mimari: `docs/MIMARI-KARARLAR.md`'
    GitHub Actions yeşil, `docker compose up` ile ayağa kalkıyor.
 7. Mimari kararlar belgesi ve README tamam.
 
-- Durum: Aşama 1-5 tamam (`stage-1` ... `stage-5`), `main`'de. Sıradaki: Aşama 6 (test, CI, Docker).
+- Durum: Aşama 1-5 tamam (`stage-1` ... `stage-5`), `main`'de. Aşama 6 `stage-6-tests-ci-docker` dalında
+  yapıldı; testler Linux container'ında ve compose duman testi yerelde geçti, CI henüz push edilmedi.
 - Aşama 4'te MassTransit yerine elle outbox + `RabbitMQ.Client` seçildi (MassTransit 9 ticari lisanslı;
   karar 6).
 - Her aşama bitince `stage-N` etiketi, aşamanın doğrulanmış son commit'ine konur.
@@ -108,6 +109,21 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
   para birimi başına tek sistem cüzdanı (filtreli unique index).
 
 ## Komutlar
+- Testler (karar 8): `tests/DigitalWallet.UnitTests` (DB yok), `tests/DigitalWallet.Api.IntegrationTests` ve
+  `tests/DigitalWallet.Notifications.IntegrationTests` (Testcontainers: postgres:18.3, rabbitmq:4.3-management,
+  `WebApplicationFactory<Program>`). xUnit v3 + Microsoft Testing Platform (`global.json`); `dotnet test
+  --project <csproj>` biçimi (VSTest değil). Test projelerinde `UseAppHost=true` (xUnit v3 zorunlu tutar;
+  Windows'ta çalıştırılmaz). Yerelde Git Bash'ten: `bash scripts/test-in-docker.sh [csproj ...]`
+  (SDK container'ı, Docker soketi bağlı, NuGet önbelleği `dw-nuget` volume'u). Tümü ≈2,5 dk.
+  Eşzamanlılık testleri mutasyonla sınandı: `FOR UPDATE` silinince üçü de kırmızı oldu.
+  API testlerinde yayıncı kapalı (`Outbox:PublisherEnabled=false`); outbox testleri ayrı fabrika açar.
+- Docker (karar 9): `copy .env.example .env` (şifreleri değiştir, yalnız harf/rakam), sonra
+  `docker compose up --build`. API `http://localhost:8080`, bildirim `http://localhost:8081`, izler
+  `http://localhost:18888`, RabbitMQ arayüzü `http://localhost:15672`. `migrator` iki EF bundle'ı çalıştırıp
+  çıkar; servisler onu bekler. Duman testi: `bash scripts/smoke-test.sh`. `docker compose down -v` volume'ları
+  da siler (geri alınamaz).
+- CI: `.github/workflows/ci.yml` — `main` ve `stage-*` push'larında derleme + üç test projesi ve compose
+  duman testi. Sonuç: `gh run list --branch <dal>`, `gh run view <id> --log-failed`.
 - Derle: `dotnet build` (kök klasörde). Projelerde `UseAppHost=false`: imzasız `.exe` üretilmez,
   çünkü Akıllı Uygulama Denetimi `DigitalWallet.AppHost.exe` ve `DigitalWallet.Api.exe`'yi her
   seferinde engelliyordu. Bunu geri açma.
@@ -155,7 +171,11 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
   olmayabilir ve 400 döner. Gövdeyi UTF-8 dosyaya yazıp `--data-binary @dosya.json` kullan.
 
 ## Bilinen eksikler
-- Test projesi yok (Aşama 6).
+- Testler yalnız Linux'ta (container/CI) çalışır. Kod kapsamı (coverage) ölçülmüyor.
+- Compose: migrator imajı ≈570 MB (iki self-contained bundle); migrator logundaki `libgssapi_krb5.so.2`
+  uyarısı zararsız (Npgsql Kerberos kütüphanesini arıyor, şifreyle bağlanıyoruz). Servislerin `/health`
+  uç noktası yalnız Development'ta açık; compose'da sağlık kontrolü yerine duman testi var. Compose'daki
+  Aspire dashboard kimlik doğrulamasız (yalnız yerel).
 - Para birimi başına tek sistem cüzdanı: aynı para birimindeki tüm para yatırmalar aynı satırı kilitler
   (hot row), sırayla işlenir. Kilit bekleme sınırı (`lock_timeout`) yok.
 - `idempotency_keys`, `outbox_messages` ve `processed_messages` hiç temizlenmiyor (süre sınırı yok).
@@ -174,8 +194,8 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
   "Yaris A", "Yaris Alici", "Yaris C" (2026-11-17 18:30 UTC) ve TRY sistem cüzdanının bakiye kolonu defterle
   uyuşmuyor (lost update kanıtı). Defter denetimi bu 4 cüzdanı gösterir; yeni bir hata değildir.
   Sıfırlamak için volume silinebilir (geri alınamaz, onay iste).
-- Otomatik test yok: lost update, deadlock ve aynı anahtarla eşzamanlı istek yalnızca elle (curl --parallel)
-  denendi. Aşama 6'da Testcontainers ile eşzamanlılık testi yazılmalı.
+- RabbitMQ kesintisinin "sonra geri gelir ve mesaj gider" yarısı otomatik testte iki ayrı testle (ulaşılamaz
+  adres / gerçek RabbitMQ) kapsanıyor; aynı container'ı durdurup yeniden başlatan test yok.
 - Ledger kayıtlarının değişmezliği yalnızca kodla korunuyor (DB tetikleyicisi yok).
 - Ekstrede cursor sayfalama yok, yalnızca `limit`.
 - `AddLedger` sonrası `wallets.type` kolonunda DB tarafında `DEFAULT 'Customer'` kaldı; EF modeli
