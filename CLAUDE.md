@@ -23,8 +23,7 @@ Redis, RabbitMQ + MassTransit, OpenTelemetry. Mimari: `docs/MIMARI-KARARLAR.md`'
    GitHub Actions yeşil, `docker compose up` ile ayağa kalkıyor.
 7. Mimari kararlar belgesi ve README tamam.
 
-- Durum: Aşama 1 (`stage-1`) ve Aşama 2 (`stage-2`) tamam, `main`'de. Aşama 3 `stage-3-concurrency`
-  dalında yapıldı ve elle doğrulandı.
+- Durum: Aşama 1-3 tamam (`stage-1`, `stage-2`, `stage-3`), `main`'de. Sıradaki: Aşama 4.
 - Her aşama bitince `stage-N` etiketi, aşamanın doğrulanmış son commit'ine konur.
 - Kapsam dışı: gerçek banka/kart entegrasyonu, frontend, Kubernetes, 3'ten fazla servis,
   kur dönüşümü (cüzdan tek para birimli, transfer aynı para birimi arasında),
@@ -131,6 +130,10 @@ ilerler: "çalışıyor" yetmez, neden öyle yapıldığı anlaşılmalı.
 - Para birimi başına tek sistem cüzdanı: aynı para birimindeki tüm para yatırmalar aynı satırı kilitler
   (hot row), sırayla işlenir. Kilit bekleme sınırı (`lock_timeout`) yok.
 - `idempotency_keys` hiç temizlenmiyor (süre sınırı yok).
+- Yerel test DB'sinde bilerek bırakılmış tutarsızlık: Aşama 3'teki kilitsiz paralel denemeden kalan
+  "Yaris A", "Yaris Alici", "Yaris C" (2026-11-17 18:30 UTC) ve TRY sistem cüzdanının bakiye kolonu defterle
+  uyuşmuyor (lost update kanıtı). Defter denetimi bu 4 cüzdanı gösterir; yeni bir hata değildir.
+  Sıfırlamak için volume silinebilir (geri alınamaz, onay iste).
 - Otomatik test yok: lost update, deadlock ve aynı anahtarla eşzamanlı istek yalnızca elle (curl --parallel)
   denendi. Aşama 6'da Testcontainers ile eşzamanlılık testi yazılmalı.
 - Ledger kayıtlarının değişmezliği yalnızca kodla korunuyor (DB tetikleyicisi yok).
