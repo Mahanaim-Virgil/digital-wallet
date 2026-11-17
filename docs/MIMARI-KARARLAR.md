@@ -129,3 +129,72 @@ olmaması ve yarım kalan işlem olmaması gerekiyor. Her hareket kayda geçmeli
   reddi) ileride eklenebilir.
 - İş kuralı hatalarını istisna ile taşımak basit ama "kontrol akışı için istisna" sayılır; hata sayısı
   az ve beklenmedik olduğu için kabul edildi.
+
+## 4. Eşzamanlılık: satır kilidi (`SELECT ... FOR UPDATE`)
+
+**Tarih:** 2026-11-17 (Aşama 3)
+
+### Bağlam
+Aşama 2'de bakiye "oku → bellekte değiştir → yaz" ile güncelleniyordu. Gerçekten paralel isteklerle
+(tek `curl --parallel` süreci) denendi: 50 × 1 TL yatırma sonunda bakiye 50 yerine 4 TL; 100 TL'lik
+cüzdandan 20 × 10 TL transferin 20'si de başarılı oldu (defterde −100 TL). Hepsi 201 döndü. Ledger
+kayıtları INSERT olduğu için kaybolmadı; denetim sorgusu tutarsızlığı hemen gösterdi. CHECK kısıtı
+yakalamadı çünkü kolona hiç eksi değer yazılmadı.
+
+### Seçenekler
+1. **Pessimistic:** transaction içinde cüzdan satırlarını `FOR UPDATE` ile kilitlemek. Aynı cüzdana gelen
+   ikinci istek bekler, sonra güncel bakiyeyi görür.
+2. **Optimistic:** PostgreSQL `xmin` kolonunu versiyon olarak kullanmak; çakışmada
+   `DbUpdateConcurrencyException`, yeniden deneme veya 409.
+3. **Atomik SQL:** `UPDATE ... SET balance = balance - @x WHERE id = @id AND balance >= @x`.
+
+### Karar
+Seçenek 1. Para yatırma ve transfer şu adımlarla çalışır:
+- EF'in yeniden deneme stratejisi (`CreateExecutionStrategy`) içinde açık transaction.
+- İlgili cüzdanlar tek sorguda `ORDER BY id FOR UPDATE` ile kilitlenir. Kilitler hep id sırasıyla
+  alındığı için A→B ve B→A transferleri birbirini sonsuza kadar beklemez (deadlock olmaz).
+- Domain kuralları kilitli, güncel satırlar üzerinde çalışır; `SaveChanges` + `Commit`.
+
+### Takas
+- Aynı cüzdana gelen istekler sıraya girer. Bir cüzdanda çakışma sık beklendiği için "bekle, doğru sonucu
+  ver" yaklaşımı, "hata ver, istemci yeniden denesin" yaklaşımından uygun.
+- Para birimi başına tek sistem cüzdanı olduğu için **tüm para yatırmalar aynı satırı kilitler** (hot row):
+  aynı para biriminde para yatırma işlemleri sırayla işlenir. Bu ölçekte kabul edildi. Gerekirse sistem
+  cüzdanının bakiyesi kolonda tutulmayıp ledger'dan hesaplanır veya birden fazla sistem alt hesabı kullanılır.
+- Kilit bekleme süresi sınırı (`lock_timeout`) konmadı; bekleme komut zaman aşımına (30 sn) kadar sürebilir.
+- Optimistic yöntemde olduğu gibi yeniden deneme mantığı gerekmez; ama transaction süresince bağlantı tutulur.
+
+## 5. Idempotency: `Idempotency-Key` başlığı, kayıt PostgreSQL'de
+
+**Tarih:** 2026-11-17 (Aşama 3)
+
+### Bağlam
+İstemci yanıtı alamazsa (ağ kopması, zaman aşımı) aynı para isteğini yeniden gönderir; para iki kez
+hareket etmemeli. Kilit bunu çözmez: iki istek de geçerli, ikisi de sırayla işlenir.
+
+### Seçenekler
+1. **PostgreSQL:** anahtar kaydı para hareketiyle aynı DB transaction'ında yazılır.
+2. **Redis:** hızlı, TTL hazır; ama DB transaction'ına katılamaz. Para yazılıp Redis yazılmadan çökme
+   olursa tekrar gelen istek parayı ikinci kez hareket ettirir.
+3. **PostgreSQL + Redis:** PostgreSQL asıl kaynak; Redis işlenmekte olan anahtarları ve yanıtları önbellekler.
+
+### Karar
+Seçenek 1. Redis, doğruluğa katkısı olmadığı için burada kullanılmadı; gerçekten işe yarayacağı bir
+yerde (ör. hız sınırlama, önbellek) sonra değerlendirilecek.
+- `POST /wallets/{id}/deposits` ve `POST /transfers` için `Idempotency-Key` başlığı **zorunlu**
+  (yoksa 400). En fazla 100 karakter.
+- Tablo `idempotency_keys`: birincil anahtar `(scope, key)`; isteğin SHA-256 özeti; oluşan
+  `transaction_id`. Yanıt gövdesi saklanmaz; tekrar gelen istekte yanıt değişmeyen ledger işleminden
+  yeniden üretilir (`Idempotent-Replayed: true` başlığıyla, aynı 201).
+- Akış (tek transaction): önce anahtar satırı INSERT edilir → cüzdanlar kilitlenir → domain → kayıt
+  işleme bağlanır → commit. Aynı anahtarla eşzamanlı ikinci istek unique index'te birincinin bitmesini
+  bekler, sonra benzersizlik hatası (23505) alır ve ilk sonucu döner.
+- Aynı anahtar farklı gövdeyle gelirse 422 (`idempotency_key_reused`).
+- Yalnızca başarılı sonuç saklanır: iş kuralı hatası (422) transaction'ı geri aldığı için anahtar da
+  kaydedilmez; aynı anahtarla yeniden denenebilir.
+
+### Takas
+- Anahtarlar silinmiyor (süre sınırı/temizlik işi yok); tablo büyür. İleride `created_at`'e göre temizlik.
+- Anahtar kapsamı uç nokta bazında (`scope`); kullanıcı bazında değil (kimlik doğrulama kapsam dışı).
+- Başarısız sonuçları saklamamak, "ilk denemede 422, sonra aynı anahtarla 201" durumuna izin verir; Stripe
+  gibi hatayı da saklayan sistemlerden farklı ama bu kapsamda daha anlaşılır.
