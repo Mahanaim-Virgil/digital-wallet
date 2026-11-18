@@ -1,6 +1,38 @@
 # Mimari Kararlar
 
-Her karar şu biçimde yazılır: bağlam, seçenekler, karar, takas.
+Her karar şu biçimde yazılır: bağlam, seçenekler, karar, takas. Kararlar alındıkları andaki bilgiyle
+yazıldı ve sonradan yeniden yazılmadı; değişen bir şey olursa kararın altına **Sonraki durum** notu eklendi.
+
+## Özet
+
+| # | Konu | Karar | Neden | Nasıl doğrulandı |
+|---|------|-------|-------|------------------|
+| 1 | Kod organizasyonu | Vertical slice + ayrı `Domain/` | Transfer gibi akışların transaction/kilit kararı tek dosyada okunsun | Domain birim testleri |
+| 2 | Migration uygulama | Yerelde açılışta (bayrakla); Docker'da bundle (karar 9) | Aspire şifreyi/portu kendisi üretiyor | Testler boş DB'ye uygular; "unutulmuş migration" testi |
+| 3 | Ledger | Çift taraflı kayıt + bakiye kolonu, sistem cüzdanları, `decimal` | Her kuruşun izi; okuma O(1) | Her testten sonra defter denetimi (toplam 0) |
+| 4 | Eşzamanlılık | `SELECT ... FOR UPDATE`, id sırasıyla | Kilitsiz kodda 50 × 1 TL yatırma 4 TL bırakıyordu | 3 eşzamanlılık testi; `FOR UPDATE` silinince üçü de kırmızı |
+| 5 | Idempotency | `Idempotency-Key`, kayıt PostgreSQL'de, para hareketiyle aynı transaction | Redis DB transaction'ına katılamaz | Aynı anahtarla 20 eşzamanlı istek → tek para hareketi |
+| 6 | Mesajlaşma | Elle Transactional Outbox + RabbitMQ.Client, inbox, DLQ | İkili yazma (dual write) olay kaybettirir; MassTransit 9 ticari | RabbitMQ kapalıyken API 201 + olay bekliyor; tekrar mesaj tek bildirim |
+| 7 | Dağıtık iz | Outbox'ta `traceparent` (ebeveyn), kök Client span'leri örnekleme dışı | Transfer iki ayrı iz görünüyordu; yoklama gürültüsü | Dashboard'da tek iz: 4 kaynak, 16 span |
+| 8 | Test | xUnit v3 + Testcontainers (gerçek PostgreSQL/RabbitMQ) | SQLite `FOR UPDATE`/`SKIP LOCKED`/CHECK'i taklit edemez | 74 test, CI'da yeşil |
+| 9 | Dağıtım | Dockerfile + EF bundle + Compose + GitHub Actions | Aspire'sız tek komut, her push'ta sınama | CI'da compose duman testi |
+
+## Plandan sapmalar
+- **Redis kullanılmadı** (karar 5). Planda idempotency için düşünülmüştü; ama Redis'e yazma, para hareketinin
+  DB transaction'ına katılamaz. Doğruluk PostgreSQL'le sağlandı; Redis'in gerçekten fayda sağlayacağı bir
+  yer (önbellek, hız sınırlama) bu kapsamda çıkmadı.
+- **MassTransit kullanılmadı** (karar 6). 9.x ticari lisansa geçti; 8.x yeni geliştirme almıyor. Outbox,
+  inbox ve dead-letter elle yazıldı.
+- **Aspire.Hosting.Testing kullanılmadı** (karar 8). Eşzamanlılık testleri için ağır; Windows'ta dcp
+  engellenebiliyor.
+
+## Açık kalanlar (bilerek kapsam dışı)
+- Kimlik doğrulama/yetkilendirme yok; id'yi bilen cüzdanı görür.
+- Sistem cüzdanı hot row: aynı para birimindeki yatırmalar sıraya girer (50 paralel yatırmada istek başına
+  0,8-1 sn ölçüldü). `lock_timeout` yok.
+- `idempotency_keys`, `outbox_messages`, `processed_messages` temizlenmiyor.
+- Ledger kayıtlarının değişmezliği DB tetikleyicisiyle değil, kodla korunuyor.
+- Telemetri kalıcı bir arka uca (Jaeger/Tempo) gitmiyor; dead-letter kuyruğu için yeniden işleme aracı yok.
 
 ## 1. Kod organizasyonu: vertical slice + ayrı Domain klasörü
 
@@ -54,6 +86,9 @@ src/DigitalWallet.ServiceDefaults/ // OpenTelemetry, health check, service disco
 - Aşama 4'te ikinci bir servis eklenince ortak kod (mesaj sözleşmeleri) için küçük bir paylaşılan
   proje gerekebilir.
 
+**Sonraki durum:** Aşama 4'te `DigitalWallet.Contracts` eklendi (yalnız olay kayıtları ve RabbitMQ adları).
+Bildirim servisi aynı slice + `Data/` + `Messaging/` düzenini izledi. Mimari test (NetArchTest) eklenmedi.
+
 ## 2. Migration'ların uygulanması: yerelde açılışta, bayrakla
 
 **Tarih:** 2026-11-17 (Aşama 1)
@@ -80,6 +115,9 @@ adım olacak (seçenek 3'e yakın).
   açılmamalı.
 - Elle uygulama yolu da açık kalıyor: `ConnectionStrings__walletdb` ortam değişkeniyle
   `dotnet ef database update` (bkz. `DesignTimeDbContextFactory`).
+
+**Sonraki durum:** Docker yolu karar 9 ile kuruldu (`migrator` imajı, iki EF bundle; servislerde bayrak
+kapalı). Entegrasyon testleri de bayrakla boş veritabanına tüm migration'ları uygular.
 
 ## 3. Ledger tasarımı: çift taraflı kayıt, bakiye kolonu, sistem cüzdanları
 
@@ -129,6 +167,10 @@ olmaması ve yarım kalan işlem olmaması gerekiyor. Her hareket kayda geçmeli
   reddi) ileride eklenebilir.
 - İş kuralı hatalarını istisna ile taşımak basit ama "kontrol akışı için istisna" sayılır; hata sayısı
   az ve beklenmedik olduğu için kabul edildi.
+
+**Sonraki durum:** Lost update Aşama 3'te gerçekten gösterildi ve karar 4 ile çözüldü. Bakiye kolonu +
+ledger kararının faydası da o sırada görüldü: kilitsiz denemede kolonlar bozuldu ama ledger kayıtları
+(INSERT) bozulmadığı için denetim sorgusu farkı tam olarak gösterdi. Hot row karar 7'deki izlerle ölçüldü.
 
 ## 4. Eşzamanlılık: satır kilidi (`SELECT ... FOR UPDATE`)
 
