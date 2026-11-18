@@ -6,7 +6,9 @@ cüzdanlar arası transfer yapar. Amaç ürünün kendisinden çok mülakatta so
 çözmek: çift taraflı kayıt (ledger), eşzamanlılık, idempotency, outbox, dağıtık izleme.
 
 Stack: .NET 10, Minimal API, PostgreSQL, EF Core + Npgsql, .NET Aspire (AppHost + ServiceDefaults),
-Redis, RabbitMQ + MassTransit, OpenTelemetry. Mimari: `docs/MIMARI-KARARLAR.md`'ye bakın.
+RabbitMQ (`RabbitMQ.Client`, elle outbox/inbox), OpenTelemetry, xUnit v3 + Testcontainers, Docker Compose,
+GitHub Actions. Planda olan Redis ve MassTransit kullanılmadı (karar 5 ve 6). Mimari:
+`docs/MIMARI-KARARLAR.md` (başında özet tablosu); genel bakış: `README.md`.
 
 ## Aşamalar
 1. İskelet: Aspire, PostgreSQL, cüzdan oluşturma (`POST /wallets`) ve bakiye (`GET /wallets/{id}`).
@@ -23,8 +25,10 @@ Redis, RabbitMQ + MassTransit, OpenTelemetry. Mimari: `docs/MIMARI-KARARLAR.md`'
    GitHub Actions yeşil, `docker compose up` ile ayağa kalkıyor.
 7. Mimari kararlar belgesi ve README tamam.
 
-- Durum: Aşama 1-6 tamam (`stage-1` ... `stage-6`), `main`'de; GitHub Actions yeşil. Sıradaki: Aşama 7
-  (mimari kararlar belgesinin son hali ve README; README'de yapay zeka kullanımı geliştiricinin cümleleriyle).
+- Durum: 7 aşamanın hepsi tamam (`stage-1` ... `stage-7`). Planlanmış aşama kalmadı. Yeni bir karar
+  alınırsa `docs/MIMARI-KARARLAR.md`'ye aynı biçimde eklenir ve özet tablosu güncellenir.
+- README'deki "Yapay zeka kullanımı" bölümü geliştiricinin kendi cevaplarından yazıldı; onun onayı olmadan
+  değiştirme.
 - Aşama 4'te MassTransit yerine elle outbox + `RabbitMQ.Client` seçildi (MassTransit 9 ticari lisanslı;
   karar 6).
 - Her aşama bitince `stage-N` etiketi, aşamanın doğrulanmış son commit'ine konur.
