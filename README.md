@@ -164,4 +164,7 @@ tabloları temizlenmiyor, ledger değişmezliği DB tetikleyicisiyle korunmuyor.
 
 ## Yapay zeka kullanımı
 
-<!-- Bu bölüm geliştiricinin cevaplarından yazılacak. -->
+Bu projede Claude'u (Anthropic) kodlamaya yardım etmesi için kullandım; amacım zaman kazanmak ve daha
+verimli çalışmaktı. Kararları ben verdim: her adımda seçenekleri okuyup seçtim. Seçenekler, takaslar ve
+verilen kararlar [mimari kararlar belgesinde](docs/MIMARI-KARARLAR.md) yazılı. Bu projede özellikle
+outbox, lost update ve idempotency hakkında çok şey öğrendim.
